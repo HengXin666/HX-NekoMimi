@@ -1,6 +1,10 @@
 name: Build & Release APK
 
 on:
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
     inputs:
       tag_name:
@@ -46,17 +50,28 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease
 
+      - name: 设置版本信息
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag_name=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "release_notes=非正式发行版本，基于 commit ${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag_name=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+            echo "release_notes=${{ github.event.inputs.release_notes }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: 重命名 APK
         run: |
           mv app/build/outputs/apk/release/app-release.apk \
-             app/build/outputs/apk/release/HX-NekoMimi-${{ github.event.inputs.tag_name }}.apk
+             app/build/outputs/apk/release/HX-NekoMimi-${{ steps.version.outputs.tag_name }}.apk
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag_name }}
-          name: HX-NekoMimi ${{ github.event.inputs.tag_name }}
-          body: ${{ github.event.inputs.release_notes }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: HX-NekoMimi ${{ steps.version.outputs.tag_name }}
+          body: ${{ steps.version.outputs.release_notes }}
           draft: false
-          prerelease: false
-          files: app/build/outputs/apk/release/HX-NekoMimi-${{ github.event.inputs.tag_name }}.apk
+          prerelease: ${{ github.event_name == 'push' }}
+          files: app/build/outputs/apk/release/HX-NekoMimi-${{ steps.version.outputs.tag_name }}.apk
