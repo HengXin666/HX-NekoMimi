@@ -1,17 +1,32 @@
 package com.hx.nekomimi.ui.player
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -19,8 +34,13 @@ import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.data.db.entity.Bookmark
 import com.hx.nekomimi.data.db.entity.PlaybackMemory
 import com.hx.nekomimi.data.repository.PlaybackRepository
+import com.hx.nekomimi.player.MemorySaveEvent
 import com.hx.nekomimi.player.PlayerManager
+import com.hx.nekomimi.subtitle.SubtitleManager
+import com.hx.nekomimi.subtitle.model.AssStyle
+import com.hx.nekomimi.subtitle.model.SubtitleCue
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -54,11 +74,54 @@ class BookPlayerViewModel @Inject constructor(
     /** Toast 消息 */
     val toastMessage = MutableStateFlow<String?>(null)
 
+    /** 自动记忆保存提示状态: null=隐藏, "saving"=正在保存, "done"=保存完成 */
+    val memorySaveStatus = MutableStateFlow<String?>(null)
+
+    // ==================== 字幕 ====================
+    val subtitleResult = MutableStateFlow<SubtitleManager.SubtitleResult>(SubtitleManager.SubtitleResult.None)
+    val cues = MutableStateFlow<List<SubtitleCue>>(emptyList())
+    val assStyles = MutableStateFlow<Map<String, AssStyle>>(emptyMap())
+
     init {
         // 监听文件变化，加载记忆
         viewModelScope.launch {
             playerManager.currentFilePath.filterNotNull().distinctUntilChanged().collect { path ->
                 currentMemory.value = repository.getMemory(path)
+            }
+        }
+
+        // 监听自动记忆保存事件 (5分钟一次)
+        viewModelScope.launch {
+            playerManager.memorySaveEvent.collect { event ->
+                // 显示 "正在保存位置..."
+                memorySaveStatus.value = "saving"
+                delay(800) // 模拟保存动画
+                // 显示 "✓ 已保存"
+                memorySaveStatus.value = "done"
+                delay(2000)
+                memorySaveStatus.value = null
+            }
+        }
+
+        // 监听文件变化，自动加载字幕
+        viewModelScope.launch {
+            playerManager.currentFilePath.filterNotNull().distinctUntilChanged().collect { path ->
+                val result = SubtitleManager.loadForAudio(path)
+                subtitleResult.value = result
+                when (result) {
+                    is SubtitleManager.SubtitleResult.Ass -> {
+                        cues.value = result.cues
+                        assStyles.value = result.styles
+                    }
+                    is SubtitleManager.SubtitleResult.Srt -> {
+                        cues.value = result.cues
+                        assStyles.value = emptyMap()
+                    }
+                    SubtitleManager.SubtitleResult.None -> {
+                        cues.value = emptyList()
+                        assStyles.value = emptyMap()
+                    }
+                }
             }
         }
     }
@@ -81,10 +144,16 @@ class BookPlayerViewModel @Inject constructor(
     /** 手动触发记忆当前位置 */
     fun saveMemoryManually() {
         viewModelScope.launch {
+            memorySaveStatus.value = "saving"
             val result = playerManager.saveMemoryManually()
+            delay(500)
             if (result != null) {
                 currentMemory.value = repository.getMemory(result.filePath)
-                toastMessage.value = "播放位置已记忆: ${formatTimeLong(result.positionMs)}"
+                memorySaveStatus.value = "done"
+                delay(2000)
+                memorySaveStatus.value = null
+            } else {
+                memorySaveStatus.value = null
             }
         }
     }
@@ -96,11 +165,9 @@ class BookPlayerViewModel @Inject constructor(
 
     /** 跳转到记忆位置 */
     fun seekToMemory(memory: PlaybackMemory) {
-        // 如果是当前文件，直接跳转
         if (memory.filePath == playerManager.currentFilePath.value) {
             playerManager.seekTo(memory.positionMs)
         } else {
-            // 切换文件并跳转
             playerManager.loadFolderAndPlay(memory.folderPath, memory.filePath)
         }
     }
@@ -118,7 +185,10 @@ class BookPlayerViewModel @Inject constructor(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookPlayerScreen(viewModel: BookPlayerViewModel = hiltViewModel()) {
+fun BookPlayerScreen(
+    onNavigateBack: () -> Unit = {},
+    viewModel: BookPlayerViewModel = hiltViewModel()
+) {
     val pm = viewModel.playerManager
     val isPlaying by pm.isPlaying.collectAsStateWithLifecycle()
     val positionMs by pm.positionMs.collectAsStateWithLifecycle()
@@ -129,6 +199,27 @@ fun BookPlayerScreen(viewModel: BookPlayerViewModel = hiltViewModel()) {
     val currentMemory by viewModel.currentMemory.collectAsStateWithLifecycle()
     val memoryHistory by viewModel.memoryHistory.collectAsStateWithLifecycle()
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
+    val memorySaveStatus by viewModel.memorySaveStatus.collectAsStateWithLifecycle()
+
+    // 字幕
+    val cues by viewModel.cues.collectAsStateWithLifecycle()
+    val assStyles by viewModel.assStyles.collectAsStateWithLifecycle()
+    val subtitleResult by viewModel.subtitleResult.collectAsStateWithLifecycle()
+
+    val currentSubtitleIndex = remember(cues, positionMs) {
+        SubtitleManager.findCurrentIndex(cues, positionMs)
+    }
+
+    // 歌词列表自动滚动
+    val lyricsListState = rememberLazyListState()
+    LaunchedEffect(currentSubtitleIndex) {
+        if (currentSubtitleIndex >= 0 && cues.isNotEmpty()) {
+            lyricsListState.animateScrollToItem(
+                index = currentSubtitleIndex,
+                scrollOffset = -150
+            )
+        }
+    }
 
     // Snackbar
     val snackbarHostState = remember { SnackbarHostState() }
@@ -139,18 +230,39 @@ fun BookPlayerScreen(viewModel: BookPlayerViewModel = hiltViewModel()) {
         }
     }
 
-    // Tab 切换: 书签 / 记忆历史
+    // Tab 切换: 字幕 / 书签 / 记忆历史
     var selectedTab by remember { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        displayName ?: "听书",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column {
+                        Text(
+                            displayName ?: "听书播放",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        // 字幕类型标识
+                        if (cues.isNotEmpty()) {
+                            val subtitleType = when (subtitleResult) {
+                                is SubtitleManager.SubtitleResult.Ass -> "ASS 字幕"
+                                is SubtitleManager.SubtitleResult.Srt -> "SRT 字幕"
+                                else -> ""
+                            }
+                            Text(
+                                "📖 $subtitleType · ${cues.size} 行",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                    }
                 },
                 actions = {
                     // 手动记忆按钮
@@ -193,13 +305,69 @@ fun BookPlayerScreen(viewModel: BookPlayerViewModel = hiltViewModel()) {
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            "从主页选择有声书文件夹开始收听",
+                            "从书详情页选择音频开始收听",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             } else {
-                // 当前记忆信息卡片
+                // ========== 自动记忆保存提示横幅 ==========
+                AnimatedVisibility(
+                    visible = memorySaveStatus != null,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                when (memorySaveStatus) {
+                                    "saving" -> MaterialTheme.colorScheme.primaryContainer
+                                    "done" -> MaterialTheme.colorScheme.tertiaryContainer
+                                    else -> MaterialTheme.colorScheme.primaryContainer
+                                }
+                            )
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            when (memorySaveStatus) {
+                                "saving" -> {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "正在保存位置...",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                                "done" -> {
+                                    Icon(
+                                        Icons.Filled.CheckCircle,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "✓ 位置已保存 (${formatTimeLong(positionMs)})",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ========== 当前记忆信息卡片 ==========
                 if (currentMemory != null) {
                     MemoryInfoCard(
                         memory = currentMemory!!,
@@ -208,32 +376,120 @@ fun BookPlayerScreen(viewModel: BookPlayerViewModel = hiltViewModel()) {
                     )
                 }
 
-                // Tab 栏
+                // ========== Tab 栏: 字幕 / 书签 / 记忆历史 ==========
                 TabRow(selectedTabIndex = selectedTab) {
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        text = { Text("书签 (${bookmarks.size})") },
-                        icon = { Icon(Icons.Filled.Bookmark, contentDescription = null) }
+                        text = {
+                            Text(
+                                if (cues.isNotEmpty()) "字幕 (${cues.size})"
+                                else "字幕"
+                            )
+                        },
+                        icon = { Icon(Icons.Filled.Subtitles, contentDescription = null) }
                     )
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text("记忆历史") },
+                        text = { Text("书签 (${bookmarks.size})") },
+                        icon = { Icon(Icons.Filled.Bookmark, contentDescription = null) }
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = { Text("记忆") },
                         icon = { Icon(Icons.Filled.History, contentDescription = null) }
                     )
                 }
 
-                // Tab 内容
+                // ========== Tab 内容 ==========
                 Box(modifier = Modifier.weight(1f)) {
                     when (selectedTab) {
-                        0 -> BookmarkList(
+                        0 -> {
+                            // 字幕视图 (同音乐的字幕)
+                            if (cues.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(
+                                            Icons.Filled.Subtitles,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(48.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            "未找到字幕文件",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            "在同目录放置同名 .srt / .ass 文件",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                }
+                            } else {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                                        AssLyricsView(
+                                            cues = cues,
+                                            styles = assStyles,
+                                            currentIndex = currentSubtitleIndex,
+                                            positionMs = positionMs,
+                                            listState = lyricsListState
+                                        )
+                                    } else {
+                                        SrtLyricsView(
+                                            cues = cues,
+                                            currentIndex = currentSubtitleIndex,
+                                            listState = lyricsListState
+                                        )
+                                    }
+
+                                    // 渐变遮罩
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(30.dp)
+                                            .align(Alignment.TopCenter)
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        MaterialTheme.colorScheme.surface,
+                                                        MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                                                    )
+                                                )
+                                            )
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(30.dp)
+                                            .align(Alignment.BottomCenter)
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                                                        MaterialTheme.colorScheme.surface
+                                                    )
+                                                )
+                                            )
+                                    )
+                                }
+                            }
+                        }
+                        1 -> BookmarkList(
                             bookmarks = bookmarks,
                             currentPositionMs = positionMs,
                             onSeek = { viewModel.seekToBookmark(it) },
                             onDelete = { viewModel.deleteBookmark(it.id) }
                         )
-                        1 -> MemoryHistoryList(
+                        2 -> MemoryHistoryList(
                             memories = memoryHistory,
                             currentPositionMs = positionMs,
                             currentFilePath = currentFile,
@@ -242,7 +498,7 @@ fun BookPlayerScreen(viewModel: BookPlayerViewModel = hiltViewModel()) {
                     }
                 }
 
-                // 播放控制栏 (复用音乐页的)
+                // ========== 播放控制栏 ==========
                 PlayerControls(
                     isPlaying = isPlaying,
                     positionMs = positionMs,
@@ -276,8 +532,9 @@ fun MemoryInfoCard(
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        )
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+        ),
+        shape = RoundedCornerShape(12.dp)
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -312,7 +569,6 @@ fun MemoryInfoCard(
 
 /**
  * 构建记忆描述文本
- * 格式: "距当前 +30s (01:25:30) | 记忆于 02-15 14:30:22"
  */
 private fun buildMemoryDescription(diffSec: Long, positionMs: Long, savedTimeStr: String): String {
     val sign = if (diffSec >= 0) "+" else ""
@@ -352,7 +608,7 @@ fun BookmarkList(
                     "暂无书签\n点击右上角 + 添加",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
             }
         }
@@ -432,8 +688,7 @@ fun MemoryHistoryList(
                             memory.displayName,
                             color = if (isCurrent) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurface,
-                            fontWeight = if (isCurrent) androidx.compose.ui.text.font.FontWeight.Bold
-                            else null,
+                            fontWeight = if (isCurrent) FontWeight.Bold else null,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )

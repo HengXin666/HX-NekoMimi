@@ -55,7 +55,10 @@ class BookmarkViewModel @Inject constructor(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookmarkScreen(viewModel: BookmarkViewModel = hiltViewModel()) {
+fun BookmarkScreen(
+    onNavigateBack: () -> Unit = {},
+    viewModel: BookmarkViewModel = hiltViewModel()
+) {
     val bookmarks by viewModel.allBookmarks.collectAsStateWithLifecycle()
     val currentFile by viewModel.playerManager.currentFilePath.collectAsStateWithLifecycle()
     val positionMs by viewModel.playerManager.positionMs.collectAsStateWithLifecycle()
@@ -68,7 +71,12 @@ fun BookmarkScreen(viewModel: BookmarkViewModel = hiltViewModel()) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("全部书签 (${bookmarks.size})") }
+                title = { Text("全部书签 (${bookmarks.size})") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
             )
         }
     ) { padding ->

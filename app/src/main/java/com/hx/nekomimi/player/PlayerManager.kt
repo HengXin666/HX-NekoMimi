@@ -7,17 +7,44 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.hx.nekomimi.data.repository.PlaybackRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * 播放模式
+ */
+enum class PlayMode {
+    /** 顺序播放 */
+    SEQUENTIAL,
+    /** 随机播放 */
+    SHUFFLE,
+    /** 单曲循环 */
+    REPEAT_ONE
+}
+
+/**
+ * 自动记忆保存事件 (用于 UI 显示提示)
+ */
+data class MemorySaveEvent(
+    val filePath: String,
+    val positionMs: Long,
+    val displayName: String,
+    val isAutoSave: Boolean = true
+)
+
+/**
  * 播放器管理器
  * 管理 ExoPlayer 实例，提供播放控制和状态监听
- * 每 3 秒自动保存播放位置 (Room + SharedPreferences 双保险)
+ * 支持: 顺序/随机/单曲循环 播放模式
+ * 支持: 音频 + 视频音轨 播放
+ * 听书模式: 每 5 分钟自动保存位置并发出通知事件
  */
 @Singleton
 class PlayerManager @Inject constructor(
@@ -65,13 +92,45 @@ class PlayerManager @Inject constructor(
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex: StateFlow<Int> = _currentIndex.asStateFlow()
 
-    // 支持的音频格式
-    private val audioExtensions = setOf(
-        "mp3", "wav", "m4a", "ogg", "flac", "aac", "wma", "opus", "ape", "alac"
+    // ==================== 播放模式 ====================
+
+    /** 当前播放模式 */
+    private val _playMode = MutableStateFlow(PlayMode.SEQUENTIAL)
+    val playMode: StateFlow<PlayMode> = _playMode.asStateFlow()
+
+    // ==================== 听书模式记忆事件 ====================
+
+    /** 是否处于听书模式 (由外部设置) */
+    private val _isAudioBookMode = MutableStateFlow(false)
+    val isAudioBookMode: StateFlow<Boolean> = _isAudioBookMode.asStateFlow()
+
+    /** 自动记忆保存事件 (UI 监听此事件显示提示) */
+    private val _memorySaveEvent = MutableSharedFlow<MemorySaveEvent>(extraBufferCapacity = 1)
+    val memorySaveEvent: SharedFlow<MemorySaveEvent> = _memorySaveEvent.asSharedFlow()
+
+    /** 听书模式下累计播放时间计数器 (毫秒)，用于 5 分钟记忆 */
+    private var audiobookPlayedMs = 0L
+    private val AUDIOBOOK_SAVE_INTERVAL_MS = 5 * 60 * 1000L // 5 分钟
+
+    // ==================== 支持的媒体格式 ====================
+
+    /**
+     * 支持的音频格式 (含视频格式 - 播放音频轨道)
+     * 音频: mp3, wav, m4a, ogg, flac, aac, wma, opus, ape, alac
+     * 视频(仅播放音轨): mp4, mkv, webm, avi, mov, ts, 3gp
+     */
+    private val mediaExtensions = setOf(
+        // 音频格式
+        "mp3", "wav", "m4a", "ogg", "flac", "aac", "wma", "opus", "ape", "alac",
+        // 视频格式 (播放音频轨道)
+        "mp4", "mkv", "webm", "avi", "mov", "ts", "3gp"
     )
 
     private fun createPlayer(): ExoPlayer {
         return ExoPlayer.Builder(context).build().apply {
+            // 初始化播放模式
+            applyPlayMode(this, _playMode.value)
+
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _isPlaying.value = isPlaying
@@ -89,7 +148,7 @@ class PlayerManager @Inject constructor(
                         _durationMs.value = duration.coerceAtLeast(0)
                     }
                     if (playbackState == Player.STATE_ENDED) {
-                        // 播放结束，保存位置并尝试播放下一个
+                        // 播放结束，保存位置
                         saveCurrentPositionSync()
                     }
                 }
@@ -110,12 +169,68 @@ class PlayerManager @Inject constructor(
     }
 
     /**
+     * 将播放模式应用到 ExoPlayer 实例
+     */
+    private fun applyPlayMode(player: ExoPlayer, mode: PlayMode) {
+        when (mode) {
+            PlayMode.SEQUENTIAL -> {
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = false
+            }
+            PlayMode.SHUFFLE -> {
+                player.repeatMode = Player.REPEAT_MODE_ALL
+                player.shuffleModeEnabled = true
+            }
+            PlayMode.REPEAT_ONE -> {
+                player.repeatMode = Player.REPEAT_MODE_ONE
+                player.shuffleModeEnabled = false
+            }
+        }
+    }
+
+    /**
+     * 切换播放模式: 顺序 → 随机 → 单曲循环 → 顺序 ...
+     */
+    fun togglePlayMode() {
+        val next = when (_playMode.value) {
+            PlayMode.SEQUENTIAL -> PlayMode.SHUFFLE
+            PlayMode.SHUFFLE -> PlayMode.REPEAT_ONE
+            PlayMode.REPEAT_ONE -> PlayMode.SEQUENTIAL
+        }
+        setPlayMode(next)
+    }
+
+    /**
+     * 设置播放模式
+     */
+    fun setPlayMode(mode: PlayMode) {
+        _playMode.value = mode
+        _player?.let { applyPlayMode(it, mode) }
+    }
+
+    /**
+     * 设置听书模式
+     * 听书模式下每 5 分钟自动记忆一次，并发出事件通知 UI
+     */
+    fun setAudioBookMode(enabled: Boolean) {
+        _isAudioBookMode.value = enabled
+        audiobookPlayedMs = 0L
+    }
+
+    // ==================== 获取支持的媒体格式 ====================
+
+    /**
+     * 获取支持的媒体文件扩展名集合 (供外部使用)
+     */
+    fun getSupportedExtensions(): Set<String> = mediaExtensions
+
+    /**
      * 加载文件夹并播放指定文件
      */
     fun loadFolderAndPlay(folderPath: String, filePath: String) {
         val folder = File(folderPath)
         val files = folder.listFiles()
-            ?.filter { it.isFile && it.extension.lowercase() in audioExtensions }
+            ?.filter { it.isFile && it.extension.lowercase() in mediaExtensions }
             ?.sortedBy { it.name }
             ?: emptyList()
 
@@ -193,7 +308,10 @@ class PlayerManager @Inject constructor(
     // ==================== 位置跟踪与保存 ====================
 
     /**
-     * 启动位置追踪: 每 300ms 更新 UI 状态，每 3 秒保存到数据库
+     * 启动位置追踪:
+     * - 每 300ms 更新 UI 状态
+     * - 每 3 秒保存到数据库 + SP 快照
+     * - 听书模式: 每 5 分钟触发一次记忆保存事件
      */
     private fun startPositionTracking() {
         positionSaveJob?.cancel()
@@ -214,6 +332,29 @@ class PlayerManager @Inject constructor(
 
                 // 每次都写入 SharedPreferences 快照 (极快，无阻塞)
                 savePositionToSnapshot(pos, dur)
+
+                // 听书模式: 每 5 分钟发出记忆保存事件
+                if (_isAudioBookMode.value && _isPlaying.value) {
+                    audiobookPlayedMs += 300
+                    if (audiobookPlayedMs >= AUDIOBOOK_SAVE_INTERVAL_MS) {
+                        audiobookPlayedMs = 0L
+                        // 保存到数据库
+                        savePositionToDb(pos, dur)
+                        // 发出事件通知 UI 显示 "正在保存位置..." → "ok"
+                        val filePath = _currentFilePath.value
+                        val displayName = _currentDisplayName.value
+                        if (filePath != null && displayName != null) {
+                            _memorySaveEvent.tryEmit(
+                                MemorySaveEvent(
+                                    filePath = filePath,
+                                    positionMs = pos,
+                                    displayName = displayName,
+                                    isAutoSave = true
+                                )
+                            )
+                        }
+                    }
+                }
 
                 delay(300)
             }
@@ -258,6 +399,7 @@ class PlayerManager @Inject constructor(
 
     /**
      * 手动触发记忆 (用户主动按钮)
+     * 同时发出事件，让 UI 显示保存提示
      */
     suspend fun saveMemoryManually(): PlaybackRepository.MemorySaveResult? {
         val filePath = _currentFilePath.value ?: return null
@@ -266,6 +408,17 @@ class PlayerManager @Inject constructor(
         val folder = _currentFolderPath.value ?: ""
         val name = _currentDisplayName.value ?: ""
         repository.saveMemory(filePath, pos, dur, folder, name)
+
+        // 发出保存事件
+        _memorySaveEvent.tryEmit(
+            MemorySaveEvent(
+                filePath = filePath,
+                positionMs = pos,
+                displayName = name,
+                isAutoSave = false
+            )
+        )
+
         return PlaybackRepository.MemorySaveResult(filePath, pos, dur, name)
     }
 

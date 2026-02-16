@@ -1,23 +1,27 @@
 package com.hx.nekomimi.data.repository
 
 import android.content.SharedPreferences
+import com.hx.nekomimi.data.db.dao.BookDao
 import com.hx.nekomimi.data.db.dao.BookmarkDao
 import com.hx.nekomimi.data.db.dao.PlaybackMemoryDao
+import com.hx.nekomimi.data.db.entity.Book
 import com.hx.nekomimi.data.db.entity.Bookmark
 import com.hx.nekomimi.data.db.entity.PlaybackMemory
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * 播放数据仓库
- * 统一管理播放记忆和书签的数据访问
+ * 统一管理播放记忆、书签、有声书的数据访问
  * 使用 SharedPreferences 作为紧急快照 (进程被杀时的最后防线)
  */
 @Singleton
 class PlaybackRepository @Inject constructor(
     private val memoryDao: PlaybackMemoryDao,
     private val bookmarkDao: BookmarkDao,
+    private val bookDao: BookDao,
     private val prefs: SharedPreferences
 ) {
     companion object {
@@ -152,6 +156,63 @@ class PlaybackRepository @Inject constructor(
     /** 删除书签 */
     suspend fun deleteBookmark(id: Long) =
         bookmarkDao.deleteById(id)
+
+    // ==================== 有声书 ====================
+
+    /**
+     * 导入一本书 (根文件夹)
+     * 如果已存在则忽略，返回已有或新建的 Book
+     */
+    suspend fun importBook(folderPath: String): Book {
+        val existing = bookDao.getByFolderPath(folderPath)
+        if (existing != null) return existing
+
+        val folderName = File(folderPath).name
+        val book = Book(
+            folderPath = folderPath,
+            title = folderName,
+            importedAt = System.currentTimeMillis(),
+            lastUpdatedAt = System.currentTimeMillis()
+        )
+        bookDao.upsert(book)
+        return bookDao.getByFolderPath(folderPath) ?: book
+    }
+
+    /** 获取所有书，按导入日期倒序 */
+    fun getAllBooksByImportDate(): Flow<List<Book>> =
+        bookDao.getAllByImportDate()
+
+    /** 获取所有书，按最近更新倒序 */
+    fun getAllBooksByLastUpdated(): Flow<List<Book>> =
+        bookDao.getAllByLastUpdated()
+
+    /** 根据文件夹路径获取书 */
+    suspend fun getBook(folderPath: String): Book? =
+        bookDao.getByFolderPath(folderPath)
+
+    /** 根据 ID 获取书 */
+    suspend fun getBookById(id: Long): Book? =
+        bookDao.getById(id)
+
+    /** 更新书的最近播放信息 */
+    suspend fun updateBookLastPlayed(
+        folderPath: String,
+        filePath: String,
+        positionMs: Long,
+        durationMs: Long,
+        displayName: String
+    ) {
+        bookDao.updateLastPlayed(folderPath, filePath, positionMs, durationMs, displayName)
+    }
+
+    /** 更新书的元信息 (标题、描述) */
+    suspend fun updateBookInfo(id: Long, title: String, description: String) {
+        bookDao.updateBookInfo(id, title, description)
+    }
+
+    /** 删除书 */
+    suspend fun deleteBook(id: Long) =
+        bookDao.deleteById(id)
 
     /** 手动记忆保存结果 */
     data class MemorySaveResult(

@@ -25,13 +25,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
 import javax.inject.Inject
 
-// 支持的音频格式
-private val AUDIO_EXTENSIONS = setOf(
-    "mp3", "wav", "m4a", "ogg", "flac", "aac", "wma", "opus", "ape", "alac"
-)
-
+/**
+ * 音乐主页 ViewModel
+ * 使用 PlayerManager 的 getSupportedExtensions() 获取支持的格式
+ */
 @HiltViewModel
-class HomeViewModel @Inject constructor(
+class MusicHomeViewModel @Inject constructor(
     val playerManager: PlayerManager
 ) : ViewModel() {
     /** 当前选中的文件夹路径 */
@@ -42,6 +41,8 @@ class HomeViewModel @Inject constructor(
 
     /** 是否显示子文件夹列表 */
     val subFolders = mutableStateOf<List<File>>(emptyList())
+
+    private val supportedExtensions = playerManager.getSupportedExtensions()
 
     fun loadFolder(path: String) {
         currentFolder.value = path
@@ -57,7 +58,7 @@ class HomeViewModel @Inject constructor(
             .filter { it.isDirectory }
             .sortedBy { it.name }
         audioFiles.value = children
-            .filter { it.isFile && it.extension.lowercase() in AUDIO_EXTENSIONS }
+            .filter { it.isFile && it.extension.lowercase() in supportedExtensions }
             .sortedBy { it.name }
     }
 
@@ -67,9 +68,16 @@ class HomeViewModel @Inject constructor(
     }
 }
 
+/**
+ * 音乐主页 - 文件夹浏览与音频文件选择
+ * @param onNavigateToPlayer 点击播放后跳转到播放页
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
+fun MusicHomeScreen(
+    onNavigateToPlayer: () -> Unit = {},
+    viewModel: MusicHomeViewModel = hiltViewModel()
+) {
     val context = LocalContext.current
     val currentFolder by remember { viewModel.currentFolder }
     val audioFiles by remember { viewModel.audioFiles }
@@ -82,7 +90,6 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
-            // 从 URI 获取实际路径
             val path = getPathFromUri(context, it)
             if (path != null) {
                 viewModel.loadFolder(path)
@@ -95,7 +102,7 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             TopAppBar(
                 title = {
                     Column {
-                        Text("🐱 NekoMimi")
+                        Text("🎵 音乐")
                         if (currentFolder != null) {
                             Text(
                                 text = currentFolder!!.substringAfterLast("/"),
@@ -106,6 +113,16 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                     }
                 },
                 actions = {
+                    // 跳转到播放页
+                    if (currentFile != null) {
+                        IconButton(onClick = onNavigateToPlayer) {
+                            Icon(
+                                Icons.Filled.PlayCircle,
+                                contentDescription = "正在播放",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     IconButton(onClick = { folderPicker.launch(null) }) {
                         Icon(Icons.Filled.FolderOpen, contentDescription = "选择文件夹")
                     }
@@ -123,14 +140,14 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        Icons.Filled.FolderOpen,
+                        Icons.Filled.MusicNote,
                         contentDescription = null,
                         modifier = Modifier.size(80.dp),
                         tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "选择一个音频文件夹开始播放",
+                        "选择一个音乐文件夹开始播放",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -147,7 +164,7 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(bottom = 80.dp) // 为底部播放栏留空间
+                contentPadding = PaddingValues(bottom = 80.dp)
             ) {
                 // 返回上级目录
                 item {
@@ -172,6 +189,7 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
 
                 // 子文件夹
                 items(subFolders, key = { it.absolutePath }) { folder ->
+                    val supportedExts = viewModel.playerManager.getSupportedExtensions()
                     ListItem(
                         headlineContent = {
                             Text(
@@ -189,7 +207,7 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                         },
                         supportingContent = {
                             val count = folder.listFiles()
-                                ?.count { it.isFile && it.extension.lowercase() in AUDIO_EXTENSIONS }
+                                ?.count { it.isFile && it.extension.lowercase() in supportedExts }
                                 ?: 0
                             if (count > 0) Text("$count 个音频")
                         },
@@ -233,6 +251,7 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
                         },
                         modifier = Modifier.clickable {
                             viewModel.playFile(file)
+                            onNavigateToPlayer()
                         }
                     )
                 }
@@ -259,23 +278,19 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
 
 /**
  * 从 content URI 获取实际文件路径
- * 注: SAF URI 无法直接获取路径，这里用常见的映射规则处理
  */
-private fun getPathFromUri(context: android.content.Context, uri: Uri): String? {
-    // 使用 DocumentsContract 获取文档 ID
+fun getPathFromUri(context: android.content.Context, uri: Uri): String? {
     val docId = try {
         android.provider.DocumentsContract.getTreeDocumentId(uri)
     } catch (e: Exception) {
         DocumentFile.fromTreeUri(context, uri)?.uri?.lastPathSegment
     } ?: return null
-    // 格式一般是 "primary:path/to/folder" 或 "xxxx-xxxx:path"
     val parts = docId.split(":")
     return when {
         parts.size >= 2 && parts[0] == "primary" -> {
             "/storage/emulated/0/${parts[1]}"
         }
         parts.size >= 2 -> {
-            // 外部 SD 卡
             "/storage/${parts[0]}/${parts[1]}"
         }
         else -> null

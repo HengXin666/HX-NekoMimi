@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.room.Room
 import com.hx.nekomimi.data.db.AppDatabase
+import com.hx.nekomimi.data.db.dao.BookDao
 import com.hx.nekomimi.data.db.dao.BookmarkDao
 import com.hx.nekomimi.data.db.dao.PlaybackMemoryDao
 import dagger.Module
@@ -24,7 +25,9 @@ object AppModule {
             context,
             AppDatabase::class.java,
             "nekomimi.db"
-        ).build()
+        )
+            .fallbackToDestructiveMigration() // 版本升级时销毁重建 (开发阶段)
+            .build()
     }
 
     @Provides
@@ -34,6 +37,10 @@ object AppModule {
     @Provides
     fun provideBookmarkDao(db: AppDatabase): BookmarkDao =
         db.bookmarkDao()
+
+    @Provides
+    fun provideBookDao(db: AppDatabase): BookDao =
+        db.bookDao()
 
     @Provides
     @Singleton
