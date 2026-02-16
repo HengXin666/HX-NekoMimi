@@ -653,7 +653,7 @@ class PlayerManager @Inject constructor(
             "flac" -> MimeTypes.AUDIO_FLAC
             "wav" -> MimeTypes.AUDIO_WAV
             "opus" -> MimeTypes.AUDIO_OPUS
-            "wma" -> MimeTypes.AUDIO_WMA
+            "wma" -> "audio/x-ms-wma"
             "mp4" -> MimeTypes.VIDEO_MP4
             "mkv" -> MimeTypes.VIDEO_MATROSKA
             "webm" -> MimeTypes.VIDEO_WEBM
