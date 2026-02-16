@@ -2,6 +2,7 @@ package com.hx.nekomimi.player
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Bundle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaNotification
@@ -29,12 +30,11 @@ class NekoNotificationProvider(
 
         /**
          * 创建通知提供者实例
+         * 注意: 通知渠道需要由调用方 (PlaybackService) 创建
          */
         fun create(context: Context): NekoNotificationProvider {
             val delegate = DefaultMediaNotificationProvider.Builder(context)
                 .setNotificationIdProvider { NOTIFICATION_ID }
-                .setNotificationChannelId(CHANNEL_ID)
-                .setNotificationChannelName(context.getString(R.string.notification_channel_playback))
                 .setSmallIcon(R.drawable.ic_notification)
                 .build()
             return NekoNotificationProvider(delegate)
@@ -51,10 +51,19 @@ class NekoNotificationProvider(
         customLayout: ImmutableList<androidx.media3.session.CommandButton>,
         actionFactory: MediaNotification.ActionFactory,
         onNotificationChangedCallback: MediaNotification.Provider.Callback
-    ): MediaNotification.Provider.Result {
+    ): MediaNotification {
         // 委托给 DefaultMediaNotificationProvider 处理
         return delegate.createNotification(
             mediaSession, customLayout, actionFactory, onNotificationChangedCallback
         )
+    }
+
+    override fun handleCustomCommand(
+        session: MediaSession,
+        action: String,
+        extras: Bundle
+    ): Boolean {
+        // 委托给 DefaultMediaNotificationProvider 处理自定义命令
+        return delegate.handleCustomCommand(session, action, extras)
     }
 }
