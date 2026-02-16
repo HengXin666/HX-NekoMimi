@@ -3,9 +3,11 @@ package com.hx.nekomimi.data.repository
 import android.content.SharedPreferences
 import com.hx.nekomimi.data.db.dao.BookDao
 import com.hx.nekomimi.data.db.dao.BookmarkDao
+import com.hx.nekomimi.data.db.dao.MusicPlaylistDao
 import com.hx.nekomimi.data.db.dao.PlaybackMemoryDao
 import com.hx.nekomimi.data.db.entity.Book
 import com.hx.nekomimi.data.db.entity.Bookmark
+import com.hx.nekomimi.data.db.entity.MusicPlaylist
 import com.hx.nekomimi.data.db.entity.PlaybackMemory
 import kotlinx.coroutines.flow.Flow
 import java.io.File
@@ -22,6 +24,7 @@ class PlaybackRepository @Inject constructor(
     private val memoryDao: PlaybackMemoryDao,
     private val bookmarkDao: BookmarkDao,
     private val bookDao: BookDao,
+    private val musicPlaylistDao: MusicPlaylistDao,
     private val prefs: SharedPreferences
 ) {
     companion object {
@@ -213,6 +216,67 @@ class PlaybackRepository @Inject constructor(
     /** 删除书 */
     suspend fun deleteBook(id: Long) =
         bookDao.deleteById(id)
+
+    // ==================== 音乐歌单 ====================
+
+    /**
+     * 导入歌单 (文件夹)
+     * 如果已存在则返回已有的，否则新建
+     */
+    suspend fun importPlaylist(folderPath: String, trackCount: Int = 0): MusicPlaylist {
+        val existing = musicPlaylistDao.getByFolderPath(folderPath)
+        if (existing != null) {
+            // 更新歌曲数量
+            musicPlaylistDao.updateTrackCount(existing.id, trackCount)
+            return existing.copy(trackCount = trackCount)
+        }
+
+        val folderName = File(folderPath).name
+        val playlist = MusicPlaylist(
+            folderPath = folderPath,
+            name = folderName,
+            trackCount = trackCount,
+            importedAt = System.currentTimeMillis()
+        )
+        musicPlaylistDao.upsert(playlist)
+        return musicPlaylistDao.getByFolderPath(folderPath) ?: playlist
+    }
+
+    /** 获取所有歌单，按最近播放时间倒序 */
+    fun getAllPlaylistsByLastPlayed(): Flow<List<MusicPlaylist>> =
+        musicPlaylistDao.getAllByLastPlayed()
+
+    /** 获取所有歌单，按导入时间倒序 */
+    fun getAllPlaylistsByImportDate(): Flow<List<MusicPlaylist>> =
+        musicPlaylistDao.getAllByImportDate()
+
+    /** 根据文件夹路径获取歌单 */
+    suspend fun getPlaylist(folderPath: String): MusicPlaylist? =
+        musicPlaylistDao.getByFolderPath(folderPath)
+
+    /** 根据 ID 获取歌单 */
+    suspend fun getPlaylistById(id: Long): MusicPlaylist? =
+        musicPlaylistDao.getById(id)
+
+    /** 更新歌单名称 */
+    suspend fun updatePlaylistName(id: Long, name: String) =
+        musicPlaylistDao.updateName(id, name)
+
+    /** 更新歌单的最近播放时间 */
+    suspend fun updatePlaylistLastPlayed(id: Long) =
+        musicPlaylistDao.updateLastPlayedAt(id, System.currentTimeMillis())
+
+    /** 更新歌单歌曲数量 */
+    suspend fun updatePlaylistTrackCount(id: Long, count: Int) =
+        musicPlaylistDao.updateTrackCount(id, count)
+
+    /** 删除歌单 */
+    suspend fun deletePlaylist(id: Long) =
+        musicPlaylistDao.deleteById(id)
+
+    /** 获取所有歌单 (非 Flow) */
+    suspend fun getAllPlaylists(): List<MusicPlaylist> =
+        musicPlaylistDao.getAll()
 
     /** 手动记忆保存结果 */
     data class MemorySaveResult(

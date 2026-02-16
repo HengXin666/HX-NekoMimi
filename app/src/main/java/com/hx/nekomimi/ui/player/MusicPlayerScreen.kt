@@ -1,8 +1,13 @@
 package com.hx.nekomimi.ui.player
 
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -19,6 +24,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -26,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,6 +48,7 @@ import com.hx.nekomimi.subtitle.model.SubtitleCue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 @HiltViewModel
@@ -77,17 +87,27 @@ class MusicPlayerViewModel @Inject constructor(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MusicPlayerScreen(viewModel: MusicPlayerViewModel = hiltViewModel()) {
+fun MusicPlayerScreen(
+    onNavigateBack: (() -> Unit)? = null,
+    viewModel: MusicPlayerViewModel = hiltViewModel()
+) {
     val pm = viewModel.playerManager
+    val context = LocalContext.current
     val isPlaying by pm.isPlaying.collectAsStateWithLifecycle()
     val positionMs by pm.positionMs.collectAsStateWithLifecycle()
     val durationMs by pm.durationMs.collectAsStateWithLifecycle()
     val displayName by pm.currentDisplayName.collectAsStateWithLifecycle()
     val currentFile by pm.currentFilePath.collectAsStateWithLifecycle()
+    val currentArtist by pm.currentArtist.collectAsStateWithLifecycle()
+    val currentAlbum by pm.currentAlbum.collectAsStateWithLifecycle()
+    val currentCover by pm.currentCover.collectAsStateWithLifecycle()
     val playMode by pm.playMode.collectAsStateWithLifecycle()
     val cues by viewModel.cues.collectAsStateWithLifecycle()
     val assStyles by viewModel.assStyles.collectAsStateWithLifecycle()
     val subtitleResult by viewModel.subtitleResult.collectAsStateWithLifecycle()
+
+    // 是否显示文件位置信息 BottomSheet
+    var showFileInfoSheet by remember { mutableStateOf(false) }
 
     val currentIndex = remember(cues, positionMs) {
         SubtitleManager.findCurrentIndex(cues, positionMs)
@@ -107,6 +127,13 @@ fun MusicPlayerScreen(viewModel: MusicPlayerViewModel = hiltViewModel()) {
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    if (onNavigateBack != null) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    }
+                },
                 title = {
                     Column {
                         Text(
@@ -115,16 +142,38 @@ fun MusicPlayerScreen(viewModel: MusicPlayerViewModel = hiltViewModel()) {
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium
                         )
-                        if (cues.isNotEmpty()) {
-                            val subtitleType = when (subtitleResult) {
-                                is SubtitleManager.SubtitleResult.Ass -> "ASS 歌词"
-                                is SubtitleManager.SubtitleResult.Srt -> "SRT 歌词"
-                                else -> ""
+                        // 显示歌手信息
+                        val subtitleText = buildList {
+                            currentArtist?.let { add(it) }
+                            currentAlbum?.let { add(it) }
+                            if (cues.isNotEmpty()) {
+                                val subtitleType = when (subtitleResult) {
+                                    is SubtitleManager.SubtitleResult.Ass -> "ASS 歌词"
+                                    is SubtitleManager.SubtitleResult.Srt -> "SRT 歌词"
+                                    else -> ""
+                                }
+                                add("🎤 $subtitleType · ${cues.size} 行")
                             }
+                        }.joinToString(" · ")
+                        if (subtitleText.isNotEmpty()) {
                             Text(
-                                "🎤 $subtitleType · ${cues.size} 行",
+                                subtitleText,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    // 查看文件位置按钮
+                    if (currentFile != null) {
+                        IconButton(onClick = { showFileInfoSheet = true }) {
+                            Icon(
+                                Icons.Filled.Info,
+                                contentDescription = "文件信息",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -170,35 +219,66 @@ fun MusicPlayerScreen(viewModel: MusicPlayerViewModel = hiltViewModel()) {
                         .fillMaxWidth()
                 ) {
                     if (cues.isEmpty()) {
-                        // 无字幕 - 显示大图标和动画
+                        // 无字幕 - 显示封面或大图标
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(
-                                horizontalAlignment = Alignment.CenterHorizontally
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(horizontal = 32.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.MusicNote,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(120.dp),
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
+                                // 封面图片
+                                Box(
+                                    modifier = Modifier
+                                        .size(220.dp)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (currentCover != null) {
+                                        Image(
+                                            bitmap = currentCover!!.asImageBitmap(),
+                                            contentDescription = "封面",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Filled.MusicNote,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(80.dp),
+                                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(20.dp))
                                 Text(
-                                    "♪ 纯音乐，请欣赏 ♪",
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                    displayName ?: "未知歌曲",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                if (currentArtist != null) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        currentArtist!!,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "未找到同名 .srt / .ass 歌词文件",
+                                    "♪ 纯音乐，请欣赏 ♪",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
                                 )
                             }
                         }
-                    } else if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                    } else if                    } else if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
                         // ASS 歌词 (带特效渲染)
                         AssLyricsView(
                             cues = cues,
@@ -262,6 +342,145 @@ fun MusicPlayerScreen(viewModel: MusicPlayerViewModel = hiltViewModel()) {
                 )
             }
         }
+    }
+
+    // ========== 文件信息 BottomSheet ==========
+    if (showFileInfoSheet && currentFile != null) {
+        FileInfoBottomSheet(
+            filePath = currentFile!!,
+            artist = currentArtist,
+            album = currentAlbum,
+            onDismiss = { showFileInfoSheet = false },
+            onOpenInFileManager = {
+                // 尝试用外部文件管理器打开文件所在目录
+                try {
+                    val file = File(currentFile!!)
+                    val parentDir = file.parentFile
+                    if (parentDir != null) {
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(
+                                Uri.parse("content://com.android.externalstorage.documents/document/primary:${parentDir.absolutePath.removePrefix("/storage/emulated/0/")}"),
+                                "resource/folder"
+                            )
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    }
+                } catch (e: Exception) {
+                    // 通用文件管理器 fallback
+                    try {
+                        val file = File(currentFile!!)
+                        val parentDir = file.parentFile
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(Uri.parse("file://${parentDir?.absolutePath}"), "*/*")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "打开文件夹"))
+                    } catch (_: Exception) { }
+                }
+            }
+        )
+    }
+}
+
+/**
+ * 文件信息 BottomSheet
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FileInfoBottomSheet(
+    filePath: String,
+    artist: String?,
+    album: String?,
+    onDismiss: () -> Unit,
+    onOpenInFileManager: () -> Unit
+) {
+    val file = remember(filePath) { File(filePath) }
+    val sheetState = rememberModalBottomSheetState()
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text(
+                "📄 文件信息",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            // 文件名
+            FileInfoRow(label = "文件名", value = file.name)
+            // 文件路径
+            FileInfoRow(label = "所在目录", value = file.parent ?: "未知")
+            // 文件大小
+            FileInfoRow(label = "文件大小", value = formatFileSize(file.length()))
+            // 格式
+            FileInfoRow(label = "格式", value = file.extension.uppercase())
+            // 歌手
+            if (artist != null) {
+                FileInfoRow(label = "歌手", value = artist)
+            }
+            // 专辑
+            if (album != null) {
+                FileInfoRow(label = "专辑", value = album)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 在文件管理器中打开
+            FilledTonalButton(
+                onClick = onOpenInFileManager,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.FolderOpen, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("在文件管理器中打开")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(0.3f)
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(0.7f),
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "未知"
+    val kb = bytes / 1024.0
+    val mb = kb / 1024.0
+    val gb = mb / 1024.0
+    return when {
+        gb >= 1 -> "%.2f GB".format(gb)
+        mb >= 1 -> "%.1f MB".format(mb)
+        else -> "%.0f KB".format(kb)
     }
 }
 

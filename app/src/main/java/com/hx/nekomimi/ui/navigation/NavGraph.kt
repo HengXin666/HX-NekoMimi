@@ -30,7 +30,11 @@ fun NavGraph(navController: NavHostController) {
             )
         }
         composable(Screen.MusicPlayer.route) {
-            MusicPlayerScreen()
+            MusicPlayerScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
         }
 
         // ========== 听书 Tab ==========

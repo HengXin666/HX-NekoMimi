@@ -6,6 +6,7 @@ import androidx.room.Room
 import com.hx.nekomimi.data.db.AppDatabase
 import com.hx.nekomimi.data.db.dao.BookDao
 import com.hx.nekomimi.data.db.dao.BookmarkDao
+import com.hx.nekomimi.data.db.dao.MusicPlaylistDao
 import com.hx.nekomimi.data.db.dao.PlaybackMemoryDao
 import dagger.Module
 import dagger.Provides
@@ -41,6 +42,10 @@ object AppModule {
     @Provides
     fun provideBookDao(db: AppDatabase): BookDao =
         db.bookDao()
+
+    @Provides
+    fun provideMusicPlaylistDao(db: AppDatabase): MusicPlaylistDao =
+        db.musicPlaylistDao()
 
     @Provides
     @Singleton

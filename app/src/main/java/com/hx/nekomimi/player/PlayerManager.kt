@@ -1,7 +1,12 @@
 package com.hx.nekomimi.player
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.hx.nekomimi.data.repository.PlaybackRepository
@@ -37,6 +42,23 @@ data class MemorySaveEvent(
     val positionMs: Long,
     val displayName: String,
     val isAutoSave: Boolean = true
+)
+
+/**
+ * 歌曲元信息 (从媒体文件中提取)
+ */
+data class TrackInfo(
+    val file: File,
+    /** 歌曲标题 (元信息中的标题，若无则用文件名) */
+    val title: String,
+    /** 歌手/艺术家 */
+    val artist: String? = null,
+    /** 专辑名 */
+    val album: String? = null,
+    /** 时长 (毫秒) */
+    val durationMs: Long = 0,
+    /** 封面图 (懒加载，可能为 null) */
+    val coverBitmap: Bitmap? = null
 )
 
 /**
@@ -92,6 +114,22 @@ class PlayerManager @Inject constructor(
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex: StateFlow<Int> = _currentIndex.asStateFlow()
 
+    /** 当前歌曲封面 */
+    private val _currentCover = MutableStateFlow<Bitmap?>(null)
+    val currentCover: StateFlow<Bitmap?> = _currentCover.asStateFlow()
+
+    /** 当前歌曲歌手 */
+    private val _currentArtist = MutableStateFlow<String?>(null)
+    val currentArtist: StateFlow<String?> = _currentArtist.asStateFlow()
+
+    /** 当前歌曲专辑 */
+    private val _currentAlbum = MutableStateFlow<String?>(null)
+    val currentAlbum: StateFlow<String?> = _currentAlbum.asStateFlow()
+
+    /** 当前歌单ID (用于关联歌单) */
+    private val _currentPlaylistId = MutableStateFlow<Long?>(null)
+    val currentPlaylistId: StateFlow<Long?> = _currentPlaylistId.asStateFlow()
+
     // ==================== 播放模式 ====================
 
     /** 当前播放模式 */
@@ -122,6 +160,8 @@ class PlayerManager @Inject constructor(
     private val mediaExtensions = setOf(
         // 音频格式
         "mp3", "wav", "m4a", "ogg", "flac", "aac", "wma", "opus", "ape", "alac",
+        // B站缓存格式 (DASH 分段音视频)
+        "m4s",
         // 视频格式 (播放音频轨道)
         "mp4", "mkv", "webm", "avi", "mov", "ts", "3gp"
     )
@@ -162,6 +202,8 @@ class PlayerManager @Inject constructor(
                         _currentFilePath.value = file.absolutePath
                         _currentDisplayName.value = file.nameWithoutExtension
                         _currentIndex.value = idx
+                        // 切歌时加载新歌曲的元信息 (封面、歌手、专辑)
+                        loadCurrentTrackMetadata(file)
                     }
                 }
             })
@@ -227,7 +269,7 @@ class PlayerManager @Inject constructor(
     /**
      * 加载文件夹并播放指定文件
      */
-    fun loadFolderAndPlay(folderPath: String, filePath: String) {
+    fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null) {
         val folder = File(folderPath)
         val files = folder.listFiles()
             ?.filter { it.isFile && it.extension.lowercase() in mediaExtensions }
@@ -236,6 +278,7 @@ class PlayerManager @Inject constructor(
 
         _playlist.value = files
         _currentFolderPath.value = folderPath
+        _currentPlaylistId.value = playlistId
 
         val startIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
         _currentIndex.value = startIndex
@@ -251,6 +294,9 @@ class PlayerManager @Inject constructor(
             prepare()
         }
 
+        // 加载当前歌曲元信息
+        loadCurrentTrackMetadata(files.getOrNull(startIndex))
+
         // 恢复上次播放位置
         scope.launch {
             val memory = repository.getMemory(filePath)
@@ -258,6 +304,47 @@ class PlayerManager @Inject constructor(
                 player.seekTo(startIndex, memory.positionMs)
             }
             player.play()
+
+            // 更新歌单的最近播放时间
+            playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+        }
+    }
+
+    /**
+     * 加载文件列表并播放指定文件 (歌单模式，文件可来自不同文件夹)
+     */
+    fun loadFilesAndPlay(files: List<File>, filePath: String, playlistFolderPath: String, playlistId: Long? = null) {
+        _playlist.value = files
+        _currentFolderPath.value = playlistFolderPath
+        _currentPlaylistId.value = playlistId
+
+        val startIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
+        _currentIndex.value = startIndex
+        _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
+        _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
+
+        val mediaItems = files.map { file ->
+            MediaItem.fromUri(file.toURI().toString())
+        }
+
+        player.apply {
+            setMediaItems(mediaItems, startIndex, 0)
+            prepare()
+        }
+
+        // 加载当前歌曲元信息
+        loadCurrentTrackMetadata(files.getOrNull(startIndex))
+
+        // 恢复上次播放位置
+        scope.launch {
+            val memory = repository.getMemory(filePath)
+            if (memory != null && memory.positionMs > 0) {
+                player.seekTo(startIndex, memory.positionMs)
+            }
+            player.play()
+
+            // 更新歌单的最近播放时间
+            playlistId?.let { repository.updatePlaylistLastPlayed(it) }
         }
     }
 
@@ -275,6 +362,9 @@ class PlayerManager @Inject constructor(
             _currentDisplayName.value = files[index].nameWithoutExtension
 
             player.seekTo(index, 0)
+
+            // 加载当前歌曲元信息
+            loadCurrentTrackMetadata(files[index])
 
             // 恢复该文件的播放位置
             scope.launch {
@@ -420,6 +510,124 @@ class PlayerManager @Inject constructor(
         )
 
         return PlaybackRepository.MemorySaveResult(filePath, pos, dur, name)
+    }
+
+    // ==================== 歌曲元信息加载 ====================
+
+    /**
+     * 加载当前歌曲的元信息 (封面、歌手、专辑)
+     * 在后台线程中执行，避免阻塞 UI
+     */
+    private fun loadCurrentTrackMetadata(file: File?) {
+        if (file == null) {
+            _currentCover.value = null
+            _currentArtist.value = null
+            _currentAlbum.value = null
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(file.absolutePath)
+
+                val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                val coverBytes = retriever.embeddedPicture
+                val cover = coverBytes?.let {
+                    BitmapFactory.decodeByteArray(it, 0, it.size)
+                }
+                retriever.release()
+
+                withContext(Dispatchers.Main) {
+                    // 如果有元信息标题，更新显示名称
+                    if (!title.isNullOrBlank()) {
+                        _currentDisplayName.value = title
+                    }
+                    _currentArtist.value = artist
+                    _currentAlbum.value = album
+                    _currentCover.value = cover
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _currentCover.value = null
+                    _currentArtist.value = null
+                    _currentAlbum.value = null
+                }
+            }
+        }
+    }
+
+    /**
+     * 加载指定文件的元信息 (供 UI 列表显示使用)
+     * 在 IO 线程执行，返回 TrackInfo
+     */
+    suspend fun loadTrackInfo(file: File): TrackInfo = withContext(Dispatchers.IO) {
+        try {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(file.absolutePath)
+
+            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                ?: file.nameWithoutExtension
+            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            val durationMs = durationStr?.toLongOrNull() ?: 0L
+            val coverBytes = retriever.embeddedPicture
+            val cover = coverBytes?.let {
+                BitmapFactory.decodeByteArray(it, 0, it.size)
+            }
+            retriever.release()
+
+            TrackInfo(
+                file = file,
+                title = title,
+                artist = artist,
+                album = album,
+                durationMs = durationMs,
+                coverBitmap = cover
+            )
+        } catch (e: Exception) {
+            TrackInfo(
+                file = file,
+                title = file.nameWithoutExtension,
+                durationMs = 0
+            )
+        }
+    }
+
+    /**
+     * 批量加载文件夹下所有音频的元信息
+     */
+    suspend fun loadFolderTrackInfos(folderPath: String): List<TrackInfo> = withContext(Dispatchers.IO) {
+        val folder = File(folderPath)
+        val files = folder.listFiles()
+            ?.filter { it.isFile && it.extension.lowercase() in mediaExtensions }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+
+        files.map { file -> loadTrackInfo(file) }
+    }
+
+    /**
+     * 递归扫描文件夹下所有音频文件 (包括子文件夹)
+     */
+    fun scanAudioFiles(folderPath: String): List<File> {
+        val folder = File(folderPath)
+        val result = mutableListOf<File>()
+        scanRecursive(folder, result)
+        return result.sortedBy { it.name }
+    }
+
+    private fun scanRecursive(dir: File, result: MutableList<File>) {
+        val children = dir.listFiles() ?: return
+        for (child in children) {
+            if (child.isDirectory) {
+                scanRecursive(child, result)
+            } else if (child.isFile && child.extension.lowercase() in mediaExtensions) {
+                result.add(child)
+            }
+        }
     }
 
     /**
