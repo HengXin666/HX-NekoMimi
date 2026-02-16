@@ -4,11 +4,14 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaNotification
+import androidx.media3.session.MediaSession
+import com.google.common.collect.ImmutableList
 import com.hx.nekomimi.R
 
 /**
  * 自定义媒体通知提供者
- * 使用 DefaultMediaNotificationProvider.Builder 配置通知外观
+ * 实现 MediaNotification.Provider 接口，委托给 DefaultMediaNotificationProvider
  *
  * 功能:
  * - 显示歌曲封面、标题、歌手 (通过 ForwardingPlayer 的 mediaMetadata)
@@ -16,9 +19,9 @@ import com.hx.nekomimi.R
  * - 点击通知打开应用 (在 MediaSession.Builder 中设置)
  */
 @UnstableApi
-class NekoNotificationProvider private constructor(
+class NekoNotificationProvider(
     private val delegate: DefaultMediaNotificationProvider
-) : DefaultMediaNotificationProvider by delegate {
+) : MediaNotification.Provider {
 
     companion object {
         const val NOTIFICATION_ID = 1001
@@ -42,4 +45,16 @@ class NekoNotificationProvider private constructor(
     @Volatile var title: String = ""
     @Volatile var artist: String? = null
     @Volatile var albumArt: Bitmap? = null
+
+    override fun createNotification(
+        mediaSession: MediaSession,
+        customLayout: ImmutableList<androidx.media3.session.CommandButton>,
+        actionFactory: MediaNotification.ActionFactory,
+        onNotificationChangedCallback: MediaNotification.Provider.Callback
+    ): MediaNotification.Provider.Result {
+        // 委托给 DefaultMediaNotificationProvider 处理
+        return delegate.createNotification(
+            mediaSession, customLayout, actionFactory, onNotificationChangedCallback
+        )
+    }
 }
