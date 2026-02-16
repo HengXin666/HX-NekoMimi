@@ -278,7 +278,7 @@ fun MusicPlayerScreen(
                                 )
                             }
                         }
-                    } else if                    } else if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                    } else if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
                         // ASS 歌词 (带特效渲染)
                         AssLyricsView(
                             cues = cues,
