@@ -35,7 +35,7 @@ class NekoNotificationProvider(
         fun create(context: Context): NekoNotificationProvider {
             val delegate = DefaultMediaNotificationProvider.Builder(context)
                 .setNotificationIdProvider { NOTIFICATION_ID }
-                .setSmallIcon(R.drawable.ic_notification)
+                .setSmallIconResourceId(R.drawable.ic_notification)
                 .build()
             return NekoNotificationProvider(delegate)
         }
