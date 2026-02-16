@@ -89,11 +89,19 @@ class BookShelfViewModel @Inject constructor(
         _sortOrder.value = order
     }
 
-    /** 导入一本书 (文件夹) */
+    /** 导入一本书 (文件夹) - 先扫描显示结果，再保存 */
     fun importBook(folderPath: String) {
         viewModelScope.launch {
+            _isScanning.value = true
+            val result = withContext(Dispatchers.IO) {
+                playerManager.scanFolderWithResult(folderPath)
+            }
+            _scanResult.value = result
+            _isScanning.value = false
+
+            // 保存到数据库
             val book = repository.importBook(folderPath)
-            toastMessage.value = "已导入: ${book.title}"
+            toastMessage.value = "已导入: ${book.title} (${result.doneCount} 个音频)"
         }
     }
 

@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.hx.nekomimi.MainActivity
@@ -28,6 +29,7 @@ import javax.inject.Inject
  * 当用户滑动清除进程时，onTaskRemoved 保证保存播放位置
  */
 @AndroidEntryPoint
+@UnstableApi
 class PlaybackService : MediaSessionService() {
 
     @Inject lateinit var playerManager: PlayerManager
@@ -38,9 +40,16 @@ class PlaybackService : MediaSessionService() {
     /** 元信息更新 Job，避免重复更新 */
     private var metadataUpdateJob: Job? = null
 
+    /** 自定义通知提供者 */
+    private lateinit var notificationProvider: NekoNotificationProvider
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+
+        // 初始化自定义通知提供者
+        notificationProvider = NekoNotificationProvider(this)
+        setNotificationProvider(notificationProvider)
 
         // 创建点击通知时打开应用的 PendingIntent
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
@@ -168,6 +177,11 @@ class PlaybackService : MediaSessionService() {
 
         // 更新 ForwardingPlayer 的覆写元数据
         wrappedPlayer.overrideMetadata = metadataBuilder.build()
+
+        // 同步更新自定义通知提供者的元信息
+        notificationProvider.title = displayName
+        notificationProvider.artist = artist
+        notificationProvider.albumArt = cover
 
         // 通知 MediaSession 刷新 (触发系统重新读取元信息并更新通知)
         session.setPlayer(wrappedPlayer)

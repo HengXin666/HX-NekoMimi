@@ -83,6 +83,8 @@ dependencies {
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.session)
     implementation(libs.media3.ui)
+    // Media3 FFmpeg 解码器扩展 (支持 m4a/m4s 等格式软解码)
+    implementation(libs.media3.decoder.ffmpeg)
 
     // Room
     implementation(libs.room.runtime)

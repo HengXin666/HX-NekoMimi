@@ -85,14 +85,17 @@ class MusicHomeViewModel @Inject constructor(
 
     fun dismissScanResult() { _scanResult.value = null }
 
-    /** 导入文件夹为歌单 */
+    /** 导入文件夹为歌单，并显示扫描结果弹窗 */
     fun importFolder(folderPath: String) {
         viewModelScope.launch {
-            val supportedExts = playerManager.getSupportedExtensions()
-            val folder = File(folderPath)
-            // 递归统计音频文件数量
-            val count = countAudioFiles(folder, supportedExts)
-            repository.importPlaylist(folderPath, count)
+            _isScanning.value = true
+            val result = withContext(Dispatchers.IO) {
+                playerManager.scanFolderWithResult(folderPath)
+            }
+            _scanResult.value = result
+            _isScanning.value = false
+            // 创建歌单
+            repository.importPlaylist(folderPath, result.doneCount)
         }
     }
 

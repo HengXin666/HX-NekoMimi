@@ -11,6 +11,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.hx.nekomimi.data.repository.PlaybackRepository
@@ -205,7 +206,14 @@ class PlayerManager @Inject constructor(
     )
 
     private fun createPlayer(): ExoPlayer {
+        // 创建渲染器工厂，启用 FFmpeg 音频解码器 (支持 m4a/m4s 等格式软解码)
+        val renderersFactory = DefaultRenderersFactory(context).apply {
+            // 启用 FFmpeg 音频渲染器，用于软解码 m4a/m4s 等格式
+            setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        }
+        
         return ExoPlayer.Builder(context)
+            .setRenderersFactory(renderersFactory)
             .setMediaSourceFactory(DefaultMediaSourceFactory(context))
             .build().apply {
             // 初始化播放模式
