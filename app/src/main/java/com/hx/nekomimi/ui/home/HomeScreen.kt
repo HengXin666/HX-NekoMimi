@@ -820,24 +820,21 @@ fun ScanResultDialog(
                             ScanStatus.PASS -> "[pass]"
                             ScanStatus.ERR -> "[err]"
                         }
-                        Column(
-                            modifier = Modifier.padding(vertical = 2.dp)
-                        ) {
-                            Text(
-                                "$icon $statusText ${item.fileName}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = color,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        // 格式: [done] C.mp3 / [pass] A.txt / [err] B.m4s: 文件不可读
+                        val displayText = buildString {
+                            append("$icon $statusText ${item.fileName}")
                             if (item.reason.isNotEmpty()) {
-                                Text(
-                                    "    ${item.reason}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = color.copy(alpha = 0.7f)
-                                )
+                                append(": ${item.reason}")
                             }
                         }
+                        Text(
+                            displayText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = color,
+                            modifier = Modifier.padding(vertical = 2.dp),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
