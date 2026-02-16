@@ -31,13 +31,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.data.db.entity.MusicPlaylist
 import com.hx.nekomimi.data.repository.PlaybackRepository
+import com.hx.nekomimi.player.FolderScanResult
 import com.hx.nekomimi.player.PlayerManager
+import com.hx.nekomimi.player.ScanStatus
 import com.hx.nekomimi.player.TrackInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
@@ -71,6 +75,16 @@ class MusicHomeViewModel @Inject constructor(
     /** 用于删除确认对话框 */
     val showDeleteDialog = mutableStateOf<MusicPlaylist?>(null)
 
+    /** 扫描结果弹窗 */
+    private val _scanResult = MutableStateFlow<FolderScanResult?>(null)
+    val scanResult: StateFlow<FolderScanResult?> = _scanResult.asStateFlow()
+
+    /** 是否正在扫描 */
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    fun dismissScanResult() { _scanResult.value = null }
+
     /** 导入文件夹为歌单 */
     fun importFolder(folderPath: String) {
         viewModelScope.launch {
@@ -79,6 +93,20 @@ class MusicHomeViewModel @Inject constructor(
             // 递归统计音频文件数量
             val count = countAudioFiles(folder, supportedExts)
             repository.importPlaylist(folderPath, count)
+        }
+    }
+
+    /** 刷新歌单: 重新递归扫描并显示扫描结果弹窗 */
+    fun refreshPlaylistWithScan(playlist: MusicPlaylist) {
+        viewModelScope.launch {
+            _isScanning.value = true
+            val result = withContext(Dispatchers.IO) {
+                playerManager.scanFolderWithResult(playlist.folderPath)
+            }
+            _scanResult.value = result
+            _isScanning.value = false
+            // 更新歌单歌曲数量
+            repository.updatePlaylistTrackCount(playlist.id, result.doneCount)
         }
     }
 
@@ -304,7 +332,8 @@ private fun PlaylistListView(
                     PlaylistItem(
                         playlist = playlist,
                         onClick = { viewModel.openPlaylist(playlist) },
-                        onLongClick = { viewModel.showDeleteDialog.value = playlist }
+                        onLongClick = { viewModel.showDeleteDialog.value = playlist },
+                        onRefresh = { viewModel.refreshPlaylistWithScan(playlist) }
                     )
                 }
             }
@@ -335,6 +364,15 @@ private fun PlaylistListView(
             }
         )
     }
+
+    // 扫描结果弹窗
+    val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
+    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+    ScanResultDialog(
+        scanResult = scanResult,
+        isScanning = isScanning,
+        onDismiss = { viewModel.dismissScanResult() }
+    )
 }
 
 /**
@@ -345,7 +383,8 @@ private fun PlaylistListView(
 private fun PlaylistItem(
     playlist: MusicPlaylist,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onRefresh: () -> Unit = {}
 ) {
     ListItem(
         headlineContent = {
@@ -391,12 +430,21 @@ private fun PlaylistItem(
             }
         },
         trailingContent = {
-            IconButton(onClick = onLongClick) {
-                Icon(
-                    Icons.Filled.MoreVert,
-                    contentDescription = "更多操作",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row {
+                IconButton(onClick = onRefresh) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = "刷新扫描",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                IconButton(onClick = onLongClick) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
         modifier = Modifier.clickable(onClick = onClick)
@@ -704,4 +752,100 @@ fun getPathFromUri(context: android.content.Context, uri: Uri): String? {
         }
         else -> null
     }
+}
+
+// ==================== 扫描结果弹窗 ====================
+
+/**
+ * 扫描结果弹窗
+ * 显示每个遍历到的文件的 [done]/[pass]/[err] 状态
+ */
+@Composable
+fun ScanResultDialog(
+    scanResult: FolderScanResult?,
+    isScanning: Boolean,
+    onDismiss: () -> Unit
+) {
+    if (isScanning) {
+        AlertDialog(
+            onDismissRequest = { /* 扫描中不允许关闭 */ },
+            title = { Text("🔍 正在扫描...") },
+            text = {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            },
+            confirmButton = {}
+        )
+        return
+    }
+
+    if (scanResult == null) return
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("📊 扫描结果")
+        },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 400.dp)) {
+                // 汇总信息
+                Text(
+                    "共 ${scanResult.totalCount} 个文件:  ✅${scanResult.doneCount}  ⏭${scanResult.passCount}  ❌${scanResult.errCount}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 文件列表
+                LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    items(scanResult.items.size) { index ->
+                        val item = scanResult.items[index]
+                        val (icon, color) = when (item.status) {
+                            ScanStatus.DONE -> "✅" to MaterialTheme.colorScheme.primary
+                            ScanStatus.PASS -> "⏭" to MaterialTheme.colorScheme.onSurfaceVariant
+                            ScanStatus.ERR -> "❌" to MaterialTheme.colorScheme.error
+                        }
+                        val statusText = when (item.status) {
+                            ScanStatus.DONE -> "[done]"
+                            ScanStatus.PASS -> "[pass]"
+                            ScanStatus.ERR -> "[err]"
+                        }
+                        Column(
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        ) {
+                            Text(
+                                "$icon $statusText ${item.fileName}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = color,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (item.reason.isNotEmpty()) {
+                                Text(
+                                    "    ${item.reason}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = color.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("确定")
+            }
+        }
+    )
 }

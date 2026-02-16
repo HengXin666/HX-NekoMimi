@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import android.util.Log
 
 /**
  * 播放模式
@@ -45,6 +46,39 @@ data class MemorySaveEvent(
     val positionMs: Long,
     val displayName: String,
     val isAutoSave: Boolean = true
+)
+
+/**
+ * 文件扫描结果状态
+ */
+enum class ScanStatus {
+    /** 音频文件，成功识别 */
+    DONE,
+    /** 非音频文件，跳过 */
+    PASS,
+    /** 音频文件但出错了 */
+    ERR
+}
+
+/**
+ * 单个文件的扫描结果
+ */
+data class ScanResultItem(
+    val fileName: String,
+    val filePath: String,
+    val status: ScanStatus,
+    val reason: String = ""
+)
+
+/**
+ * 文件夹扫描汇总结果
+ */
+data class FolderScanResult(
+    val items: List<ScanResultItem>,
+    val totalCount: Int,
+    val doneCount: Int,
+    val passCount: Int,
+    val errCount: Int
 )
 
 /**
@@ -270,14 +304,10 @@ class PlayerManager @Inject constructor(
     fun getSupportedExtensions(): Set<String> = mediaExtensions
 
     /**
-     * 加载文件夹并播放指定文件
+     * 加载文件夹并播放指定文件 (递归扫描子文件夹)
      */
     fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null) {
-        val folder = File(folderPath)
-        val files = folder.listFiles()
-            ?.filter { it.isFile && it.extension.lowercase() in mediaExtensions }
-            ?.sortedBy { it.name }
-            ?: emptyList()
+        val files = scanAudioFiles(folderPath)  // 递归扫描
 
         _playlist.value = files
         _currentFolderPath.value = folderPath
@@ -605,16 +635,68 @@ class PlayerManager @Inject constructor(
     }
 
     /**
-     * 批量加载文件夹下所有音频的元信息
+     * 批量加载文件夹下所有音频的元信息 (递归扫描子文件夹)
      */
     suspend fun loadFolderTrackInfos(folderPath: String): List<TrackInfo> = withContext(Dispatchers.IO) {
         val folder = File(folderPath)
-        val files = folder.listFiles()
-            ?.filter { it.isFile && it.extension.lowercase() in mediaExtensions }
-            ?.sortedBy { it.name }
-            ?: emptyList()
+        val files = scanAudioFiles(folderPath)
 
         files.map { file -> loadTrackInfo(file) }
+    }
+
+    /**
+     * 递归扫描文件夹并返回详细扫描结果 (含 [done]/[pass]/[err] 状态)
+     * 用于扫描结果弹窗展示
+     */
+    fun scanFolderWithResult(folderPath: String): FolderScanResult {
+        val items = mutableListOf<ScanResultItem>()
+        scanWithResultRecursive(File(folderPath), items)
+        val doneCount = items.count { it.status == ScanStatus.DONE }
+        val passCount = items.count { it.status == ScanStatus.PASS }
+        val errCount = items.count { it.status == ScanStatus.ERR }
+        return FolderScanResult(
+            items = items,
+            totalCount = items.size,
+            doneCount = doneCount,
+            passCount = passCount,
+            errCount = errCount
+        )
+    }
+
+    private fun scanWithResultRecursive(dir: File, result: MutableList<ScanResultItem>) {
+        val children = dir.listFiles() ?: return
+        for (child in children) {
+            if (child.isDirectory) {
+                scanWithResultRecursive(child, result)
+            } else if (child.isFile) {
+                val ext = child.extension.lowercase()
+                if (ext in mediaExtensions) {
+                    // 音频/视频文件，尝试确认可读
+                    if (child.canRead()) {
+                        result.add(ScanResultItem(
+                            fileName = child.name,
+                            filePath = child.absolutePath,
+                            status = ScanStatus.DONE
+                        ))
+                    } else {
+                        result.add(ScanResultItem(
+                            fileName = child.name,
+                            filePath = child.absolutePath,
+                            status = ScanStatus.ERR,
+                            reason = "文件不可读"
+                        ))
+                    }
+                } else {
+                    // 非音频文件，跳过
+                    result.add(ScanResultItem(
+                        fileName = child.name,
+                        filePath = child.absolutePath,
+                        status = ScanStatus.PASS,
+                        reason = "非音频格式 (.$ext)"
+                    ))
+                }
+            }
+        }
     }
 
     /**
@@ -643,12 +725,18 @@ class PlayerManager @Inject constructor(
     /**
      * 根据文件扩展名获取对应的 MIME 类型
      * 特别处理 m4s (B站缓存的 DASH 分段格式) 等 ExoPlayer 无法自动识别的格式
+     *
+     * 关键注意:
+     * - M4A 是 MP4 容器包裹 AAC 音频，MIME 应为 audio/mp4 而非 audio/aac
+     * - M4S 是 DASH 分段，本质也是 MP4 容器
+     * - AUDIO_AAC (audio/aac) 仅适用于裸 ADTS 流
      */
     private fun getMimeTypeForFile(file: File): String? {
         return when (file.extension.lowercase()) {
             "m4s" -> MimeTypes.AUDIO_MP4  // B站缓存 DASH 分段，本质是 MP4 容器
+            "m4a" -> MimeTypes.AUDIO_MP4  // M4A 是 MP4 容器 + AAC 音频，必须用 audio/mp4
+            "aac" -> MimeTypes.AUDIO_AAC  // 裸 AAC (ADTS) 流
             "mp3" -> MimeTypes.AUDIO_MPEG
-            "m4a", "aac" -> MimeTypes.AUDIO_AAC
             "ogg" -> MimeTypes.AUDIO_OGG
             "flac" -> MimeTypes.AUDIO_FLAC
             "wav" -> MimeTypes.AUDIO_WAV
@@ -668,17 +756,33 @@ class PlayerManager @Inject constructor(
     /**
      * 为文件创建 MediaItem，自动设置正确的 MIME 类型
      * 解决 m4s 等格式 ExoPlayer 无法自动识别的问题
+     *
+     * 注意: 使用 Uri.fromFile() 生成 Android 原生 Uri，而非 File.toURI()
+     * File.toURI() 生成 Java 风格 URI，在含中文/空格路径时可能导致 ExoPlayer 解析失败
      */
     private fun createMediaItem(file: File): MediaItem {
-        val uri = file.toURI().toString()
+        val uri = Uri.fromFile(file)  // Android 原生 Uri，兼容性更好
         val mimeType = getMimeTypeForFile(file)
+        Log.d("PlayerManager", "createMediaItem: ${file.name}, mime=$mimeType, uri=$uri")
         return if (mimeType != null) {
             MediaItem.Builder()
                 .setUri(uri)
                 .setMimeType(mimeType)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(file.nameWithoutExtension)
+                        .build()
+                )
                 .build()
         } else {
-            MediaItem.fromUri(uri)
+            MediaItem.Builder()
+                .setUri(uri)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(file.nameWithoutExtension)
+                        .build()
+                )
+                .build()
         }
     }
 

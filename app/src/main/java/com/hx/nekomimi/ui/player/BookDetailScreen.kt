@@ -22,10 +22,14 @@ import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.data.db.entity.Book
 import com.hx.nekomimi.data.db.entity.PlaybackMemory
 import com.hx.nekomimi.data.repository.PlaybackRepository
+import com.hx.nekomimi.player.FolderScanResult
 import com.hx.nekomimi.player.PlayerManager
+import com.hx.nekomimi.ui.home.ScanResultDialog
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -69,6 +73,31 @@ class BookDetailViewModel @Inject constructor(
     val editDescription = MutableStateFlow("")
 
     val toastMessage = MutableStateFlow<String?>(null)
+
+    /** 扫描结果弹窗 */
+    private val _scanResult = MutableStateFlow<FolderScanResult?>(null)
+    val scanResult: StateFlow<FolderScanResult?> = _scanResult.asStateFlow()
+
+    /** 是否正在扫描 */
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    fun dismissScanResult() { _scanResult.value = null }
+
+    /** 刷新当前文件夹: 重新递归扫描并显示扫描结果弹窗 */
+    fun refreshCurrentFolder() {
+        val path = rootFolderPath.value ?: return
+        viewModelScope.launch {
+            _isScanning.value = true
+            val result = withContext(Dispatchers.IO) {
+                playerManager.scanFolderWithResult(path)
+            }
+            _scanResult.value = result
+            _isScanning.value = false
+            // 刷新当前浏览的文件夹内容
+            currentBrowsePath.value?.let { loadFolderContent(it) }
+        }
+    }
 
     /** 用于删除音频文件确认对话框 */
     val showDeleteFileDialog = MutableStateFlow<File?>(null)
@@ -376,6 +405,14 @@ fun BookDetailScreen(
                             )
                         }
                     }
+                    // 刷新按钮
+                    IconButton(onClick = { viewModel.refreshCurrentFolder() }) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = "刷新扫描",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     // 书签按钮
                     IconButton(onClick = onNavigateToBookmarks) {
                         Icon(Icons.Filled.Bookmark, contentDescription = "书签")
@@ -389,6 +426,15 @@ fun BookDetailScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
+        // 扫描结果弹窗
+        val scanResultVal by viewModel.scanResult.collectAsStateWithLifecycle()
+        val isScanningVal by viewModel.isScanning.collectAsStateWithLifecycle()
+        ScanResultDialog(
+            scanResult = scanResultVal,
+            isScanning = isScanningVal,
+            onDismiss = { viewModel.dismissScanResult() }
+        )
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()

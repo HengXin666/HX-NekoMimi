@@ -29,11 +29,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.data.db.entity.Book
 import com.hx.nekomimi.data.repository.PlaybackRepository
+import com.hx.nekomimi.player.FolderScanResult
+import com.hx.nekomimi.player.PlayerManager
+import com.hx.nekomimi.ui.home.ScanResultDialog
 import com.hx.nekomimi.ui.home.getPathFromUri
 import com.hx.nekomimi.ui.player.formatTimeLong
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -51,7 +56,8 @@ enum class BookSortOrder {
 
 @HiltViewModel
 class BookShelfViewModel @Inject constructor(
-    private val repository: PlaybackRepository
+    private val repository: PlaybackRepository,
+    private val playerManager: PlayerManager
 ) : ViewModel() {
 
     private val _sortOrder = MutableStateFlow(BookSortOrder.LAST_UPDATED)
@@ -69,6 +75,16 @@ class BookShelfViewModel @Inject constructor(
 
     val toastMessage = MutableStateFlow<String?>(null)
 
+    /** 扫描结果弹窗 */
+    private val _scanResult = MutableStateFlow<FolderScanResult?>(null)
+    val scanResult: StateFlow<FolderScanResult?> = _scanResult.asStateFlow()
+
+    /** 是否正在扫描 */
+    private val _isScanning = MutableStateFlow(false)
+    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    fun dismissScanResult() { _scanResult.value = null }
+
     fun setSortOrder(order: BookSortOrder) {
         _sortOrder.value = order
     }
@@ -78,6 +94,19 @@ class BookShelfViewModel @Inject constructor(
         viewModelScope.launch {
             val book = repository.importBook(folderPath)
             toastMessage.value = "已导入: ${book.title}"
+        }
+    }
+
+    /** 刷新一本书: 重新递归扫描并显示扫描结果弹窗 */
+    fun refreshBookWithScan(book: Book) {
+        viewModelScope.launch {
+            _isScanning.value = true
+            val result = withContext(Dispatchers.IO) {
+                playerManager.scanFolderWithResult(book.folderPath)
+            }
+            _scanResult.value = result
+            _isScanning.value = false
+            toastMessage.value = "${book.title}: 扫描完成 (${result.doneCount} 个音频)"
         }
     }
 
@@ -128,8 +157,54 @@ fun BookShelfScreen(
         }
     }
 
-    // 长按删除确认对话框
+    // 长按操作确认对话框
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
+    var bookToRefresh by remember { mutableStateOf<Book?>(null) }
+    var showActionMenu by remember { mutableStateOf<Book?>(null) }
+
+    // 操作菜单对话框 (长按弹出)
+    if (showActionMenu != null) {
+        AlertDialog(
+            onDismissRequest = { showActionMenu = null },
+            title = { Text("\uD83D\uDCD6 ${showActionMenu!!.title}") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            val b = showActionMenu!!
+                            showActionMenu = null
+                            viewModel.refreshBookWithScan(b)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("刷新扫描")
+                    }
+                    TextButton(
+                        onClick = {
+                            val b = showActionMenu!!
+                            showActionMenu = null
+                            bookToDelete = b
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Filled.Delete, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("移除有声书")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showActionMenu = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     if (bookToDelete != null) {
         AlertDialog(
@@ -276,11 +351,20 @@ fun BookShelfScreen(
                     BookCard(
                         book = book,
                         onClick = { onNavigateToBookDetail(book.folderPath) },
-                        onLongClick = { bookToDelete = book }
+                        onLongClick = { showActionMenu = book }
                     )
                 }
             }
         }
+
+        // 扫描结果弹窗
+        val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
+        val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+        ScanResultDialog(
+            scanResult = scanResult,
+            isScanning = isScanning,
+            onDismiss = { viewModel.dismissScanResult() }
+        )
     }
 }
 
