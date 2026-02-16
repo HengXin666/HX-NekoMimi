@@ -33,12 +33,20 @@ jobs:
       - name: 赋予 Gradle 执行权限
         run: chmod +x gradlew
 
+      - name: 解码签名密钥
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/nekomimi-release.jks
+
       - name: 构建 Release APK
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/nekomimi-release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease
 
       - name: 重命名 APK
         run: |
-          mv app/build/outputs/apk/release/app-release-unsigned.apk \
+          mv app/build/outputs/apk/release/app-release.apk \
              app/build/outputs/apk/release/HX-NekoMimi-${{ github.event.inputs.tag_name }}.apk
 
       - name: 创建 GitHub Release
