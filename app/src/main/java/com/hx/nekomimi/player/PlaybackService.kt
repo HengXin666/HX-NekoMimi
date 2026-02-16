@@ -48,8 +48,8 @@ class PlaybackService : MediaSessionService() {
         createNotificationChannel()
 
         // 初始化自定义通知提供者
-        notificationProvider = NekoNotificationProvider(this)
-        setNotificationProvider(notificationProvider)
+        notificationProvider = NekoNotificationProvider.create(this)
+        setMediaNotificationProvider(notificationProvider)
 
         // 创建点击通知时打开应用的 PendingIntent
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
