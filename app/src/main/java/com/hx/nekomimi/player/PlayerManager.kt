@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.hx.nekomimi.data.repository.PlaybackRepository
@@ -287,9 +288,7 @@ class PlayerManager @Inject constructor(
         _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
         _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
 
-        val mediaItems = files.map { file ->
-            MediaItem.fromUri(file.toURI().toString())
-        }
+        val mediaItems = files.map { file -> createMediaItem(file) }
 
         // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
         ensureServiceStarted()
@@ -328,9 +327,7 @@ class PlayerManager @Inject constructor(
         _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
         _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
 
-        val mediaItems = files.map { file ->
-            MediaItem.fromUri(file.toURI().toString())
-        }
+        val mediaItems = files.map { file -> createMediaItem(file) }
 
         // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
         ensureServiceStarted()
@@ -638,6 +635,50 @@ class PlayerManager @Inject constructor(
             } else if (child.isFile && child.extension.lowercase() in mediaExtensions) {
                 result.add(child)
             }
+        }
+    }
+
+    // ==================== MediaItem 构建 (MIME 类型支持) ====================
+
+    /**
+     * 根据文件扩展名获取对应的 MIME 类型
+     * 特别处理 m4s (B站缓存的 DASH 分段格式) 等 ExoPlayer 无法自动识别的格式
+     */
+    private fun getMimeTypeForFile(file: File): String? {
+        return when (file.extension.lowercase()) {
+            "m4s" -> MimeTypes.AUDIO_MP4  // B站缓存 DASH 分段，本质是 MP4 容器
+            "mp3" -> MimeTypes.AUDIO_MPEG
+            "m4a", "aac" -> MimeTypes.AUDIO_AAC
+            "ogg" -> MimeTypes.AUDIO_OGG
+            "flac" -> MimeTypes.AUDIO_FLAC
+            "wav" -> MimeTypes.AUDIO_WAV
+            "opus" -> MimeTypes.AUDIO_OPUS
+            "wma" -> MimeTypes.AUDIO_WMA
+            "mp4" -> MimeTypes.VIDEO_MP4
+            "mkv" -> MimeTypes.VIDEO_MATROSKA
+            "webm" -> MimeTypes.VIDEO_WEBM
+            "ts" -> MimeTypes.VIDEO_MP2T
+            "3gp" -> MimeTypes.VIDEO_H263
+            "avi" -> MimeTypes.VIDEO_MP4 // AVI 尝试用 MP4 解析
+            "mov" -> MimeTypes.VIDEO_MP4
+            else -> null // 其他格式让 ExoPlayer 自动检测
+        }
+    }
+
+    /**
+     * 为文件创建 MediaItem，自动设置正确的 MIME 类型
+     * 解决 m4s 等格式 ExoPlayer 无法自动识别的问题
+     */
+    private fun createMediaItem(file: File): MediaItem {
+        val uri = file.toURI().toString()
+        val mimeType = getMimeTypeForFile(file)
+        return if (mimeType != null) {
+            MediaItem.Builder()
+                .setUri(uri)
+                .setMimeType(mimeType)
+                .build()
+        } else {
+            MediaItem.fromUri(uri)
         }
     }
 

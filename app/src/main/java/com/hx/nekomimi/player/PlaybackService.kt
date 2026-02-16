@@ -6,7 +6,9 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.hx.nekomimi.MainActivity
@@ -49,7 +51,11 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        mediaSession = MediaSession.Builder(this, playerManager.player)
+        // 使用 ForwardingPlayer 包装原始 player，用于注入动态元信息
+        // 这样 MediaSession 读取 mediaMetadata 时能获取到实时的歌曲信息
+        val wrappedPlayer = MetadataForwardingPlayer(playerManager.player)
+
+        mediaSession = MediaSession.Builder(this, wrappedPlayer)
             .setSessionActivity(pendingIntent)
             .setCallback(object : MediaSession.Callback {
                 override fun onConnect(
@@ -79,14 +85,14 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * 监听 PlayerManager 的元信息状态，同步更新到 MediaSession
-     * 这样通知栏、锁屏界面、系统导航栏媒体控制器 都能显示正确的歌曲信息
+     * 通过 ForwardingPlayer 覆写 mediaMetadata，然后触发 session 失效通知系统刷新
+     * 不再使用 replaceMediaItem，避免播放状态被打断导致通知消失
      */
     private fun startMetadataSync() {
         // 监听当前文件路径变化 (切歌时)
         serviceScope.launch {
             playerManager.currentFilePath.collect { filePath ->
                 if (filePath != null) {
-                    // 延迟一小段时间等待元信息加载完成
                     metadataUpdateJob?.cancel()
                     metadataUpdateJob = launch {
                         delay(500) // 等待 PlayerManager 加载元信息
@@ -106,14 +112,38 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         }
+
+        // 监听歌手变化
+        serviceScope.launch {
+            playerManager.currentArtist.collect { _ ->
+                metadataUpdateJob?.cancel()
+                metadataUpdateJob = launch {
+                    delay(100)
+                    updateMediaMetadata()
+                }
+            }
+        }
+
+        // 监听显示名称变化
+        serviceScope.launch {
+            playerManager.currentDisplayName.collect { _ ->
+                metadataUpdateJob?.cancel()
+                metadataUpdateJob = launch {
+                    delay(100)
+                    updateMediaMetadata()
+                }
+            }
+        }
     }
 
     /**
-     * 将 PlayerManager 中的元信息同步到 ExoPlayer 的 MediaMetadata
-     * 这样 MediaSession 通知栏和锁屏界面会自动显示这些信息
+     * 将 PlayerManager 中的元信息同步到 ForwardingPlayer 的覆写元数据
+     * 然后通过 MediaSession.setPlayer() 刷新来通知系统更新通知栏/锁屏
+     * 不使用 replaceMediaItem，避免播放状态被打断
      */
     private fun updateMediaMetadata() {
-        val player = mediaSession?.player ?: return
+        val session = mediaSession ?: return
+        val wrappedPlayer = session.player as? MetadataForwardingPlayer ?: return
         val displayName = playerManager.currentDisplayName.value ?: return
         val artist = playerManager.currentArtist.value
         val album = playerManager.currentAlbum.value
@@ -136,19 +166,11 @@ class PlaybackService : MediaSessionService() {
             )
         }
 
-        // 通过 MediaSession 设置元信息
-        val currentItem = player.currentMediaItem
-        if (currentItem != null) {
-            val updatedItem = currentItem.buildUpon()
-                .setMediaMetadata(metadataBuilder.build())
-                .build()
-            val currentIndex = player.currentMediaItemIndex
-            val currentPosition = player.currentPosition
+        // 更新 ForwardingPlayer 的覆写元数据
+        wrappedPlayer.overrideMetadata = metadataBuilder.build()
 
-            // 替换当前 MediaItem 以更新元信息
-            player.replaceMediaItem(currentIndex, updatedItem)
-            player.seekTo(currentIndex, currentPosition)
-        }
+        // 通知 MediaSession 刷新 (触发系统重新读取元信息并更新通知)
+        session.setPlayer(wrappedPlayer)
     }
 
     /**
@@ -199,6 +221,23 @@ class PlaybackService : MediaSessionService() {
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * ForwardingPlayer 包装器
+     * 覆写 mediaMetadata 属性，让 MediaSession 能获取到实时的歌曲元信息
+     * 避免使用 replaceMediaItem 导致播放状态被打断、通知栏消失
+     */
+    private class MetadataForwardingPlayer(
+        player: Player
+    ) : ForwardingPlayer(player) {
+
+        /** 覆写的元数据，由 PlaybackService 在收到 PlayerManager 元信息更新时设置 */
+        var overrideMetadata: MediaMetadata? = null
+
+        override fun getMediaMetadata(): MediaMetadata {
+            return overrideMetadata ?: super.getMediaMetadata()
         }
     }
 

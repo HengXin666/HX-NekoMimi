@@ -2,6 +2,7 @@ package com.hx.nekomimi.ui.home
 
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -194,6 +195,11 @@ fun MusicHomeScreen(
                 viewModel.importFolder(path)
             }
         }
+    }
+
+    // 拦截系统返回键: 在歌单详情中按返回键时回到歌单列表，而不是退出程序
+    BackHandler(enabled = currentPlaylist != null) {
+        viewModel.backToPlaylists()
     }
 
     // 根据当前状态显示歌单列表 / 歌单详情

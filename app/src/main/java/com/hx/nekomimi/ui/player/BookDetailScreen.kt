@@ -1,5 +1,6 @@
 package com.hx.nekomimi.ui.player
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -278,6 +279,12 @@ fun BookDetailScreen(
     // 初始化加载
     LaunchedEffect(folderPath) {
         viewModel.loadBook(folderPath)
+    }
+
+    // 拦截系统返回键: 如果在子文件夹中，先返回上级目录；否则才退出页面
+    val isAtRoot = currentBrowsePath == rootFolderPath
+    BackHandler(enabled = !isAtRoot) {
+        viewModel.navigateUp()
     }
 
     // 删除音频文件确认对话框

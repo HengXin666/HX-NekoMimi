@@ -3,7 +3,9 @@ package com.hx.nekomimi.ui.shelf
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -285,7 +287,7 @@ fun BookShelfScreen(
 /**
  * 书卡片
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun BookCard(
     book: Book,
@@ -303,10 +305,13 @@ fun BookCard(
     }
 
     Card(
-        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.78f),
+            .aspectRatio(0.78f)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
         ),
