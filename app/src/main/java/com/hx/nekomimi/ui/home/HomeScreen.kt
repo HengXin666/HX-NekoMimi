@@ -131,6 +131,29 @@ class MusicHomeViewModel @Inject constructor(
         }
     }
 
+    /** 用于删除歌曲确认对话框 */
+    val showDeleteTrackDialog = mutableStateOf<TrackInfo?>(null)
+
+    /** 删除歌曲 (删除实际文件) */
+    fun deleteTrack(trackInfo: TrackInfo) {
+        viewModelScope.launch {
+            try {
+                val file = trackInfo.file
+                if (file.exists() && file.delete()) {
+                    // 从当前列表中移除
+                    _trackInfos.value = _trackInfos.value.filter { it.file.absolutePath != file.absolutePath }
+                    // 更新歌单歌曲数量
+                    val playlist = _currentPlaylist.value
+                    if (playlist != null) {
+                        repository.updatePlaylistTrackCount(playlist.id, _trackInfos.value.size)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     private fun countAudioFiles(dir: File, supportedExts: Set<String>): Int {
         if (!dir.exists() || !dir.isDirectory) return 0
         var count = 0
@@ -487,11 +510,40 @@ private fun PlaylistDetailView(
                         onClick = {
                             viewModel.playTrack(trackInfo)
                             onNavigateToPlayer()
+                        },
+                        onDelete = {
+                            viewModel.showDeleteTrackDialog.value = trackInfo
                         }
                     )
                 }
             }
         }
+    }
+
+    // 删除歌曲确认对话框
+    val deleteTrackTarget by remember { viewModel.showDeleteTrackDialog }
+    if (deleteTrackTarget != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.showDeleteTrackDialog.value = null },
+            title = { Text("删除歌曲") },
+            text = { Text("确定要删除「${deleteTrackTarget!!.title}」吗？\n\n⚠ 此操作将删除实际文件，不可恢复！") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteTrack(deleteTrackTarget!!)
+                        viewModel.showDeleteTrackDialog.value = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.showDeleteTrackDialog.value = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 
@@ -503,7 +555,8 @@ private fun TrackInfoItem(
     trackInfo: TrackInfo,
     isCurrent: Boolean,
     isPlaying: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDelete: () -> Unit = {}
 ) {
     ListItem(
         headlineContent = {
@@ -542,19 +595,32 @@ private fun TrackInfoItem(
             )
         },
         trailingContent = {
-            if (isCurrent && isPlaying) {
-                Icon(
-                    Icons.Filled.Equalizer,
-                    contentDescription = "正在播放",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            } else {
-                Text(
-                    trackInfo.file.extension.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isCurrent && isPlaying) {
+                    Icon(
+                        Icons.Filled.Equalizer,
+                        contentDescription = "正在播放",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                } else {
+                    Text(
+                        trackInfo.file.extension.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "删除",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         },
         modifier = Modifier.clickable(onClick = onClick)

@@ -390,6 +390,8 @@ fun BookCard(
  */
 private val AUDIO_EXTS = setOf(
     "mp3", "wav", "m4a", "ogg", "flac", "aac", "wma", "opus", "ape", "alac",
+    // B站缓存格式 (DASH 分段音视频)
+    "m4s",
     "mp4", "mkv", "webm", "avi", "mov", "ts", "3gp"
 )
 

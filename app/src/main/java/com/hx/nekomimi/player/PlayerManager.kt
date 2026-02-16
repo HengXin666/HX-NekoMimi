@@ -1,10 +1,12 @@
 package com.hx.nekomimi.player
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -289,6 +291,9 @@ class PlayerManager @Inject constructor(
             MediaItem.fromUri(file.toURI().toString())
         }
 
+        // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
+        ensureServiceStarted()
+
         player.apply {
             setMediaItems(mediaItems, startIndex, 0)
             prepare()
@@ -326,6 +331,9 @@ class PlayerManager @Inject constructor(
         val mediaItems = files.map { file ->
             MediaItem.fromUri(file.toURI().toString())
         }
+
+        // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
+        ensureServiceStarted()
 
         player.apply {
             setMediaItems(mediaItems, startIndex, 0)
@@ -377,7 +385,10 @@ class PlayerManager @Inject constructor(
         }
     }
 
-    fun play() { player.play() }
+    fun play() {
+        ensureServiceStarted()
+        player.play()
+    }
     fun pause() { player.pause() }
     fun seekTo(positionMs: Long) { player.seekTo(positionMs) }
 
@@ -630,6 +641,31 @@ class PlayerManager @Inject constructor(
         }
     }
 
+    // ==================== 前台服务管理 ====================
+
+    /** 是否已经启动过服务 */
+    private var serviceStarted = false
+
+    /**
+     * 确保 PlaybackService 前台服务已启动
+     * 只有服务启动后，通知栏/锁屏/系统导航栏的媒体控制才会生效
+     */
+    private fun ensureServiceStarted() {
+        if (serviceStarted) return
+        try {
+            val intent = Intent(context, PlaybackService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+            serviceStarted = true
+        } catch (e: Exception) {
+            // 忽略启动失败 (例如后台启动限制)
+            e.printStackTrace()
+        }
+    }
+
     /**
      * 释放播放器资源
      */
@@ -638,6 +674,7 @@ class PlayerManager @Inject constructor(
         stopPositionTracking()
         _player?.release()
         _player = null
+        serviceStarted = false
         scope.cancel()
     }
 }

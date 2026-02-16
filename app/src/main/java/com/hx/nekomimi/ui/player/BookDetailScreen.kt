@@ -69,6 +69,26 @@ class BookDetailViewModel @Inject constructor(
 
     val toastMessage = MutableStateFlow<String?>(null)
 
+    /** 用于删除音频文件确认对话框 */
+    val showDeleteFileDialog = MutableStateFlow<File?>(null)
+
+    /** 删除音频文件 (删除实际文件) */
+    fun deleteAudioFile(file: File) {
+        viewModelScope.launch {
+            try {
+                if (file.exists() && file.delete()) {
+                    toastMessage.value = "已删除: ${file.name}"
+                    // 刷新当前文件夹内容
+                    currentBrowsePath.value?.let { loadFolderContent(it) }
+                } else {
+                    toastMessage.value = "删除失败"
+                }
+            } catch (e: Exception) {
+                toastMessage.value = "删除失败: ${e.message}"
+            }
+        }
+    }
+
     /**
      * 初始化: 加载书的信息和文件列表
      */
@@ -258,6 +278,32 @@ fun BookDetailScreen(
     // 初始化加载
     LaunchedEffect(folderPath) {
         viewModel.loadBook(folderPath)
+    }
+
+    // 删除音频文件确认对话框
+    val deleteFileTarget by viewModel.showDeleteFileDialog.collectAsStateWithLifecycle()
+    if (deleteFileTarget != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.showDeleteFileDialog.value = null },
+            title = { Text("删除音频文件") },
+            text = { Text("确定要删除「${deleteFileTarget!!.name}」吗？\n\n⚠ 此操作将删除实际文件，不可恢复！") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteAudioFile(deleteFileTarget!!)
+                        viewModel.showDeleteFileDialog.value = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.showDeleteFileDialog.value = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     // 编辑对话框
@@ -470,6 +516,19 @@ fun BookDetailScreen(
                                 item.file.extension.uppercase(),
                                 style = MaterialTheme.typography.labelSmall
                             )
+                        },
+                        trailingContent = {
+                            IconButton(
+                                onClick = { viewModel.showDeleteFileDialog.value = item.file },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = "删除",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         },
                         modifier = Modifier.clickable {
                             viewModel.playFile(item.file)

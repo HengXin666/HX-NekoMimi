@@ -6,13 +6,9 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.Bundle
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.Player
-import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import androidx.media3.session.SessionCommand
 import com.hx.nekomimi.MainActivity
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
@@ -55,6 +51,22 @@ class PlaybackService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, playerManager.player)
             .setSessionActivity(pendingIntent)
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(
+                    session: MediaSession,
+                    controller: MediaSession.ControllerInfo
+                ): MediaSession.ConnectionResult {
+                    // 允许所有控制器连接，并授予所有可用的播放操作
+                    return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailablePlayerCommands(
+                            MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
+                        )
+                        .setAvailableSessionCommands(
+                            MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                        )
+                        .build()
+                }
+            })
             .build()
 
         // 监听歌曲元信息变化，更新通知栏/锁屏的元信息
