@@ -12,6 +12,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.hx.nekomimi.data.repository.PlaybackRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
@@ -204,7 +205,9 @@ class PlayerManager @Inject constructor(
     )
 
     private fun createPlayer(): ExoPlayer {
-        return ExoPlayer.Builder(context).build().apply {
+        return ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context))
+            .build().apply {
             // 初始化播放模式
             applyPlayMode(this, _playMode.value)
 
@@ -724,17 +727,18 @@ class PlayerManager @Inject constructor(
 
     /**
      * 根据文件扩展名获取对应的 MIME 类型
-     * 特别处理 m4s (B站缓存的 DASH 分段格式) 等 ExoPlayer 无法自动识别的格式
      *
      * 关键注意:
-     * - M4A 是 MP4 容器包裹 AAC 音频，MIME 应为 audio/mp4 而非 audio/aac
-     * - M4S 是 DASH 分段，本质也是 MP4 容器
+     * - M4A 是 MP4 容器包裹 AAC 音频，MIME 应为 VIDEO_MP4 (通用 MP4 容器)，让 ExoPlayer 自动提取音频轨
+     * - M4S 是 Fragmented MP4 (DASH 分段)，也使用 VIDEO_MP4，让 FragmentedMp4Extractor 处理
      * - AUDIO_AAC (audio/aac) 仅适用于裸 ADTS 流
+     * - 对 M4S/M4A 这类 MP4 容器，用 video/mp4 比 audio/mp4 更可靠，因为 ExoPlayer
+     *   的 MP4 Extractor 在 video/mp4 下会同时处理音频和视频轨道
      */
     private fun getMimeTypeForFile(file: File): String? {
         return when (file.extension.lowercase()) {
-            "m4s" -> MimeTypes.AUDIO_MP4  // B站缓存 DASH 分段，本质是 MP4 容器
-            "m4a" -> MimeTypes.AUDIO_MP4  // M4A 是 MP4 容器 + AAC 音频，必须用 audio/mp4
+            "m4s" -> MimeTypes.VIDEO_MP4  // B站缓存 DASH Fragmented MP4，需要 FragmentedMp4Extractor
+            "m4a" -> MimeTypes.VIDEO_MP4  // M4A 是 MP4 容器 + AAC 音频，用 video/mp4 让 MP4 Extractor 处理
             "aac" -> MimeTypes.AUDIO_AAC  // 裸 AAC (ADTS) 流
             "mp3" -> MimeTypes.AUDIO_MPEG
             "ogg" -> MimeTypes.AUDIO_OGG
@@ -755,35 +759,34 @@ class PlayerManager @Inject constructor(
 
     /**
      * 为文件创建 MediaItem，自动设置正确的 MIME 类型
-     * 解决 m4s 等格式 ExoPlayer 无法自动识别的问题
+     * 解决 m4s / m4a 等格式 ExoPlayer 无法自动识别的问题
      *
-     * 注意: 使用 Uri.fromFile() 生成 Android 原生 Uri，而非 File.toURI()
-     * File.toURI() 生成 Java 风格 URI，在含中文/空格路径时可能导致 ExoPlayer 解析失败
+     * 关键: 
+     * - 使用 Uri.fromFile() 生成 Android 原生 Uri (兼容中文/空格路径)
+     * - M4S/M4A 等 MP4 容器文件通过 setMimeType(VIDEO_MP4) 强制 ExoPlayer 使用 MP4/FragmentedMp4 Extractor
+     * - 设置 setMediaId 以便精确标识每个媒体
      */
     private fun createMediaItem(file: File): MediaItem {
         val uri = Uri.fromFile(file)  // Android 原生 Uri，兼容性更好
         val mimeType = getMimeTypeForFile(file)
-        Log.d("PlayerManager", "createMediaItem: ${file.name}, mime=$mimeType, uri=$uri")
-        return if (mimeType != null) {
-            MediaItem.Builder()
-                .setUri(uri)
-                .setMimeType(mimeType)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(file.nameWithoutExtension)
-                        .build()
-                )
-                .build()
-        } else {
-            MediaItem.Builder()
-                .setUri(uri)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(file.nameWithoutExtension)
-                        .build()
-                )
-                .build()
+        val ext = file.extension.lowercase()
+        Log.d("PlayerManager", "createMediaItem: ${file.name}, ext=$ext, mime=$mimeType, uri=$uri")
+
+        val builder = MediaItem.Builder()
+            .setUri(uri)
+            .setMediaId(file.absolutePath)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(file.nameWithoutExtension)
+                    .build()
+            )
+
+        // 对于所有已知格式都显式设置 MIME 类型
+        if (mimeType != null) {
+            builder.setMimeType(mimeType)
         }
+
+        return builder.build()
     }
 
     // ==================== 前台服务管理 ====================

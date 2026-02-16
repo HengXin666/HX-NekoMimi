@@ -357,15 +357,16 @@ fun BookShelfScreen(
             }
         }
 
-        // 扫描结果弹窗
-        val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
-        val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
-        ScanResultDialog(
-            scanResult = scanResult,
-            isScanning = isScanning,
-            onDismiss = { viewModel.dismissScanResult() }
-        )
     }
+
+    // 扫描结果弹窗 (必须放在 Scaffold 外部，确保 Dialog 不受 Scaffold content 区域约束)
+    val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
+    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+    ScanResultDialog(
+        scanResult = scanResult,
+        isScanning = isScanning,
+        onDismiss = { viewModel.dismissScanResult() }
+    )
 }
 
 /**

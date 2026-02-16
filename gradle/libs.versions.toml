@@ -54,6 +54,7 @@ compose-material-icons-extended = { group = "androidx.compose.material", name = 
 
 # Media3 (ExoPlayer)
 media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+media3-exoplayer-dash = { group = "androidx.media3", name = "media3-exoplayer-dash", version.ref = "media3" }
 media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
 media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 

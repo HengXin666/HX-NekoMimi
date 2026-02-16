@@ -426,15 +426,6 @@ fun BookDetailScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
-        // 扫描结果弹窗
-        val scanResultVal by viewModel.scanResult.collectAsStateWithLifecycle()
-        val isScanningVal by viewModel.isScanning.collectAsStateWithLifecycle()
-        ScanResultDialog(
-            scanResult = scanResultVal,
-            isScanning = isScanningVal,
-            onDismiss = { viewModel.dismissScanResult() }
-        )
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -592,6 +583,15 @@ fun BookDetailScreen(
             }
         }
     }
+
+    // 扫描结果弹窗 (必须放在 Scaffold 外部，确保 Dialog 不受 content 区域约束)
+    val scanResultVal by viewModel.scanResult.collectAsStateWithLifecycle()
+    val isScanningVal by viewModel.isScanning.collectAsStateWithLifecycle()
+    ScanResultDialog(
+        scanResult = scanResultVal,
+        isScanning = isScanningVal,
+        onDismiss = { viewModel.dismissScanResult() }
+    )
 }
 
 /**

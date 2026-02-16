@@ -246,6 +246,15 @@ fun MusicHomeScreen(
             currentFile = currentFile
         )
     }
+
+    // 扫描结果弹窗 (必须放在 MusicHomeScreen 顶层，无论歌单列表还是详情都能看到)
+    val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
+    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
+    ScanResultDialog(
+        scanResult = scanResult,
+        isScanning = isScanning,
+        onDismiss = { viewModel.dismissScanResult() }
+    )
 }
 
 // ==================== 歌单列表 ====================
@@ -364,15 +373,6 @@ private fun PlaylistListView(
             }
         )
     }
-
-    // 扫描结果弹窗
-    val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
-    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
-    ScanResultDialog(
-        scanResult = scanResult,
-        isScanning = isScanning,
-        onDismiss = { viewModel.dismissScanResult() }
-    )
 }
 
 /**
