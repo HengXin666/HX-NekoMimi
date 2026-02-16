@@ -79,12 +79,13 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     // Media3 (ExoPlayer)
+    // 默认支持: mp3, aac, m4a, ogg, wav, flac, opus 等常见格式
+    // m4a = MP4容器音频 (AAC编码), Media3 原生支持
+    // m4s = DASH 分片格式, 通过 dash 扩展支持
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.session)
     implementation(libs.media3.ui)
-    // Media3 FFmpeg 解码器扩展 (支持 m4a/m4s 等格式软解码)
-    implementation(libs.media3.decoder.ffmpeg)
 
     // Room
     implementation(libs.room.runtime)
