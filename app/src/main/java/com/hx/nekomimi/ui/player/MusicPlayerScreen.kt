@@ -578,7 +578,7 @@ fun AssLyricsView(
 
 /**
  * 单行 ASS 特效文本渲染
- * 支持: 颜色、加粗、斜体、字号、淡入淡出、描边、阴影
+ * 支持: 颜色、加粗、斜体、字号、淡入淡出、描边、阴影、卡拉OK特效
  */
 @Composable
 fun AssStyledText(
@@ -587,6 +587,20 @@ fun AssStyledText(
     isCurrent: Boolean,
     currentPositionMs: Long
 ) {
+    // 检测是否有卡拉OK特效
+    if (hasKaraokeEffect(cue)) {
+        // 使用卡拉OK渲染器
+        KaraokeText(
+            syllables = cue.karaokeSyllables,
+            style = style,
+            isCurrent = isCurrent,
+            cueStartMs = cue.startMs,
+            currentPositionMs = currentPositionMs,
+            modifier = Modifier.fillMaxWidth()
+        )
+        return
+    }
+
     var textColor = style?.let { Color(it.primaryColor) }
         ?: MaterialTheme.colorScheme.onSurface
     var fontSize = style?.fontSize ?: 18f

@@ -90,11 +90,16 @@ class BookShelfViewModel @Inject constructor(
     }
 
     /** 导入一本书 (文件夹) - 先扫描显示结果，再保存 */
-    fun importBook(folderPath: String, folderUri: Uri? = null) {
+    fun importBook(context: android.content.Context, folderPath: String, folderUri: Uri? = null) {
         viewModelScope.launch {
             _isScanning.value = true
             val result = withContext(Dispatchers.IO) {
-                playerManager.scanFolderWithResult(folderPath)
+                // 优先使用 URI 扫描 (解决隐藏文件夹无法用 File API 访问的问题)
+                if (folderUri != null) {
+                    playerManager.scanFolderWithResult(context, folderUri)
+                } else {
+                    playerManager.scanFolderWithResult(folderPath)
+                }
             }
             _scanResult.value = result
             _isScanning.value = false
@@ -106,11 +111,17 @@ class BookShelfViewModel @Inject constructor(
     }
 
     /** 刷新一本书: 重新递归扫描并显示扫描结果弹窗 */
-    fun refreshBookWithScan(book: Book) {
+    fun refreshBookWithScan(context: android.content.Context, book: Book) {
         viewModelScope.launch {
             _isScanning.value = true
             val result = withContext(Dispatchers.IO) {
-                playerManager.scanFolderWithResult(book.folderPath)
+                // 优先使用 URI 扫描 (解决隐藏文件夹无法用 File API 访问的问题)
+                if (book.folderUri != null) {
+                    val uri = Uri.parse(book.folderUri)
+                    playerManager.scanFolderWithResult(context, uri)
+                } else {
+                    playerManager.scanFolderWithResult(book.folderPath)
+                }
             }
             _scanResult.value = result
             _isScanning.value = false
@@ -158,9 +169,19 @@ fun BookShelfScreen(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
+            // 持久化 URI 权限，以便后续访问 (和音乐导入保持一致)
+            val contentResolver = context.contentResolver
+            contentResolver.takePersistableUriPermission(
+                it,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            
             val path = getPathFromUri(context, it)
             if (path != null) {
-                viewModel.importBook(path, it)
+                viewModel.importBook(context, path, it)
+            } else {
+                // 无法解析路径，直接使用 URI 作为标识
+                viewModel.importBook(context, it.toString(), it)
             }
         }
     }
@@ -181,7 +202,7 @@ fun BookShelfScreen(
                         onClick = {
                             val b = showActionMenu!!
                             showActionMenu = null
-                            viewModel.refreshBookWithScan(b)
+                            viewModel.refreshBookWithScan(context, b)
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {

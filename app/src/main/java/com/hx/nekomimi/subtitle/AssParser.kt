@@ -135,6 +135,8 @@ object AssParser {
 
         // 解析内联特效标签
         val effects = parseInlineEffects(rawText)
+        // 解析卡拉OK音节 (如果存在卡拉OK标签)
+        val karaokeSyllables = parseKaraokeSyllables(rawText)
         // 提取纯文本 (去除 {} 标签块, 替换 \N 为换行)
         val text = rawText
             .replace(Regex("\\{[^}]*\\}"), "")
@@ -150,8 +152,61 @@ object AssParser {
             text = text,
             rawText = rawText,
             styleName = styleName,
-            effects = effects
+            effects = effects,
+            karaokeSyllables = karaokeSyllables
         )
+    }
+
+    /**
+     * 解析卡拉OK音节
+     * 格式: {\k50}音节1{\k30}音节2{\kf20}音节3
+     * 返回每个音节的文本、时间偏移和持续时间
+     */
+    private fun parseKaraokeSyllables(rawText: String): List<KaraokeSyllable> {
+        val syllables = mutableListOf<KaraokeSyllable>()
+        val tagBlockPattern = Regex("\\{([^}]*)\\}([^{]*)")
+        var currentOffsetMs = 0L
+        var currentEffects = mutableListOf<AssEffect>()
+
+        for (match in tagBlockPattern.findAll(rawText)) {
+            val tagBlock = match.groupValues[1]
+            val textAfter = match.groupValues[2]
+                .replace("\\N", "\n")
+                .replace("\\n", "\n")
+
+            // 解析该块内的所有标签
+            val blockEffects = mutableListOf<AssEffect>()
+            parseTagBlock(tagBlock, blockEffects)
+
+            // 更新当前累积的特效（非卡拉OK特效会累积）
+            for (effect in blockEffects) {
+                if (effect !is AssEffect.Karaoke) {
+                    currentEffects.add(effect)
+                }
+            }
+
+            // 查找卡拉OK标签
+            val kTag = blockEffects.filterIsInstance<AssEffect.Karaoke>().firstOrNull()
+            if (kTag != null && textAfter.isNotEmpty()) {
+                val durationMs = kTag.durationCs * 10L // 厘秒转毫秒
+                syllables.add(
+                    KaraokeSyllable(
+                        text = textAfter,
+                        startOffsetMs = currentOffsetMs,
+                        durationMs = durationMs,
+                        type = kTag.type,
+                        effects = currentEffects.toList()
+                    )
+                )
+                currentOffsetMs += durationMs
+                // 清除已应用到音节的非持久特效
+                currentEffects = currentEffects.filter { effect ->
+                    effect is AssEffect.Color || effect is AssEffect.Alpha
+                }.toMutableList()
+            }
+        }
+
+        return syllables
     }
 
     /**

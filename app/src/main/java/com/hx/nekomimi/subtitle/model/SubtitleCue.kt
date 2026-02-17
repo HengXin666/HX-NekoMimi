@@ -16,8 +16,30 @@ data class SubtitleCue(
     /** ASS 样式名 (仅 ASS 格式) */
     val styleName: String? = null,
     /** 内联特效覆盖 (解析后的 ASS 特效) */
-    val effects: List<AssEffect> = emptyList()
+    val effects: List<AssEffect> = emptyList(),
+    /** 卡拉OK音节列表 (仅卡拉OK特效字幕) */
+    val karaokeSyllables: List<KaraokeSyllable> = emptyList()
 )
+
+/**
+ * 卡拉OK音节
+ * 表示一个带时间信息的音节，用于逐字填充效果
+ */
+data class KaraokeSyllable(
+    /** 音节文本 */
+    val text: String,
+    /** 相对于字幕开始时间的偏移量 (毫秒) */
+    val startOffsetMs: Long,
+    /** 持续时间 (毫秒) */
+    val durationMs: Long,
+    /** 卡拉OK类型 */
+    val type: KaraokeType = KaraokeType.FILL,
+    /** 该音节前的特效标签 (应用于此音节) */
+    val effects: List<AssEffect> = emptyList()
+) {
+    /** 音节结束时间偏移 */
+    val endOffsetMs: Long get() = startOffsetMs + durationMs
+}
 
 /**
  * ASS 特效标签 (内联覆盖)
