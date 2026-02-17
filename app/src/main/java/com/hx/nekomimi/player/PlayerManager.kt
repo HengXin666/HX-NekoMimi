@@ -658,6 +658,7 @@ class PlayerManager @Inject constructor(
     /**
      * 递归扫描文件夹并返回详细扫描结果 (含 [done]/[pass]/[err] 状态)
      * 用于扫描结果弹窗展示
+     * 使用 File API (适用于应用私有目录或已获得存储权限的旧设备)
      */
     fun scanFolderWithResult(folderPath: String): FolderScanResult {
         val items = mutableListOf<ScanResultItem>()
@@ -674,8 +675,129 @@ class PlayerManager @Inject constructor(
         )
     }
 
+    /**
+     * 基于 DocumentFile 的扫描 (适用于 Android 11+ SAF 授权的文件夹)
+     * 解决分区存储限制下 File.listFiles() 返回 null 的问题
+     */
+    fun scanFolderWithResult(context: android.content.Context, folderUri: android.net.Uri): FolderScanResult {
+        val items = mutableListOf<ScanResultItem>()
+        val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+        if (treeDoc == null) {
+            android.util.Log.e("PlayerManager", "无法从URI创建DocumentFile: $folderUri")
+            return FolderScanResult(items, 0, 0, 0, 0)
+        }
+        scanWithDocumentFileRecursive(treeDoc, items)
+        val doneCount = items.count { it.status == ScanStatus.DONE }
+        val passCount = items.count { it.status == ScanStatus.PASS }
+        val errCount = items.count { it.status == ScanStatus.ERR }
+        return FolderScanResult(
+            items = items,
+            totalCount = items.size,
+            doneCount = doneCount,
+            passCount = passCount,
+            errCount = errCount
+        )
+    }
+
+    /**
+     * 递归扫描 DocumentFile 目录
+     */
+    private fun scanWithDocumentFileRecursive(dir: androidx.documentfile.provider.DocumentFile, result: MutableList<ScanResultItem>) {
+        if (!dir.exists()) {
+            android.util.Log.w("PlayerManager", "DocumentFile目录不存在: ${dir.uri}")
+            result.add(ScanResultItem(
+                fileName = dir.name ?: "unknown",
+                filePath = dir.uri.toString(),
+                status = ScanStatus.ERR,
+                reason = "目录不存在"
+            ))
+            return
+        }
+        if (!dir.isDirectory) {
+            android.util.Log.w("PlayerManager", "DocumentFile不是目录: ${dir.uri}")
+            result.add(ScanResultItem(
+                fileName = dir.name ?: "unknown",
+                filePath = dir.uri.toString(),
+                status = ScanStatus.ERR,
+                reason = "不是目录"
+            ))
+            return
+        }
+
+        val children = dir.listFiles()
+        android.util.Log.d("PlayerManager", "DocumentFile扫描目录: ${dir.uri}, 文件数: ${children.size}")
+
+        for (child in children) {
+            if (child.isDirectory) {
+                scanWithDocumentFileRecursive(child, result)
+            } else if (child.isFile) {
+                val name = child.name ?: continue
+                val ext = name.substringAfterLast('.', "").lowercase()
+                if (ext in mediaExtensions) {
+                    result.add(ScanResultItem(
+                        fileName = name,
+                        filePath = child.uri.toString(),
+                        status = ScanStatus.DONE
+                    ))
+                } else {
+                    result.add(ScanResultItem(
+                        fileName = name,
+                        filePath = child.uri.toString(),
+                        status = ScanStatus.PASS,
+                        reason = "非音频格式 (.$ext)"
+                    ))
+                }
+            }
+        }
+    }
+
     private fun scanWithResultRecursive(dir: File, result: MutableList<ScanResultItem>) {
-        val children = dir.listFiles() ?: return
+        // 调试：检查目录是否存在、是否可读
+        if (!dir.exists()) {
+            android.util.Log.w("PlayerManager", "扫描目录不存在: ${dir.absolutePath}")
+            result.add(ScanResultItem(
+                fileName = dir.name,
+                filePath = dir.absolutePath,
+                status = ScanStatus.ERR,
+                reason = "目录不存在"
+            ))
+            return
+        }
+        if (!dir.canRead()) {
+            android.util.Log.w("PlayerManager", "扫描目录不可读: ${dir.absolutePath}")
+            result.add(ScanResultItem(
+                fileName = dir.name,
+                filePath = dir.absolutePath,
+                status = ScanStatus.ERR,
+                reason = "目录无读取权限"
+            ))
+            return
+        }
+        if (!dir.isDirectory) {
+            android.util.Log.w("PlayerManager", "路径不是目录: ${dir.absolutePath}")
+            result.add(ScanResultItem(
+                fileName = dir.name,
+                filePath = dir.absolutePath,
+                status = ScanStatus.ERR,
+                reason = "路径不是目录"
+            ))
+            return
+        }
+        
+        val children = dir.listFiles()
+        if (children == null) {
+            android.util.Log.w("PlayerManager", "listFiles返回null: ${dir.absolutePath}")
+            result.add(ScanResultItem(
+                fileName = dir.name,
+                filePath = dir.absolutePath,
+                status = ScanStatus.ERR,
+                reason = "无法列出目录内容"
+            ))
+            return
+        }
+        
+        android.util.Log.d("PlayerManager", "扫描目录: ${dir.absolutePath}, 文件数: ${children.size}")
+        
         for (child in children) {
             if (child.isDirectory) {
                 scanWithResultRecursive(child, result)
@@ -706,6 +828,9 @@ class PlayerManager @Inject constructor(
                         reason = "非音频格式 (.$ext)"
                     ))
                 }
+            } else {
+                // 既不是文件也不是目录（可能是符号链接等）
+                android.util.Log.d("PlayerManager", "跳过特殊文件: ${child.absolutePath}, exists=${child.exists()}, isFile=${child.isFile}, isDirectory=${child.isDirectory}")
             }
         }
     }

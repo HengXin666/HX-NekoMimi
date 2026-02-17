@@ -85,16 +85,16 @@ class MusicHomeViewModel @Inject constructor(
 
     fun dismissScanResult() { _scanResult.value = null }
 
-    /** 导入文件夹为歌单，并显示扫描结果弹窗 */
-    fun importFolder(folderPath: String) {
+    /** 导入文件夹为歌单，并显示扫描结果弹窗 (使用 URI，支持 Android 11+ SAF) */
+    fun importFolder(context: android.content.Context, folderUri: android.net.Uri, folderPath: String) {
         viewModelScope.launch {
             _isScanning.value = true
             val result = withContext(Dispatchers.IO) {
-                playerManager.scanFolderWithResult(folderPath)
+                playerManager.scanFolderWithResult(context, folderUri)
             }
             _scanResult.value = result
             _isScanning.value = false
-            // 创建歌单
+            // 创建歌单 (使用路径作为标识)
             repository.importPlaylist(folderPath, result.doneCount)
         }
     }
@@ -221,9 +221,20 @@ fun MusicHomeScreen(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         uri?.let {
+            // 持久化 URI 权限，以便后续访问
+            val contentResolver = context.contentResolver
+            contentResolver.takePersistableUriPermission(
+                it,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            
             val path = getPathFromUri(context, it)
             if (path != null) {
-                viewModel.importFolder(path)
+                // 使用 URI 扫描 (解决 Android 11+ 分区存储限制)
+                viewModel.importFolder(context, it, path)
+            } else {
+                // 无法解析路径，直接使用 URI 作为标识
+                viewModel.importFolder(context, it, it.toString())
             }
         }
     }
@@ -740,21 +751,40 @@ private fun formatDuration(ms: Long): String {
  * 从 content URI 获取实际文件路径
  */
 fun getPathFromUri(context: android.content.Context, uri: Uri): String? {
+    android.util.Log.d("getPathFromUri", "原始URI: $uri")
+    
     val docId = try {
-        android.provider.DocumentsContract.getTreeDocumentId(uri)
+        android.provider.DocumentsContract.getTreeDocumentId(uri).also {
+            android.util.Log.d("getPathFromUri", "getTreeDocumentId结果: $it")
+        }
     } catch (e: Exception) {
-        DocumentFile.fromTreeUri(context, uri)?.uri?.lastPathSegment
-    } ?: return null
+        android.util.Log.w("getPathFromUri", "getTreeDocumentId失败，尝试备用方法", e)
+        DocumentFile.fromTreeUri(context, uri)?.uri?.lastPathSegment.also {
+            android.util.Log.d("getPathFromUri", "备用方法结果: $it")
+        }
+    } ?: run {
+        android.util.Log.e("getPathFromUri", "无法获取documentId")
+        return null
+    }
+    
     val parts = docId.split(":")
-    return when {
+    android.util.Log.d("getPathFromUri", "分割结果: parts=$parts, size=${parts.size}")
+    
+    val result = when {
         parts.size >= 2 && parts[0] == "primary" -> {
             "/storage/emulated/0/${parts[1]}"
         }
         parts.size >= 2 -> {
             "/storage/${parts[0]}/${parts[1]}"
         }
-        else -> null
+        else -> {
+            android.util.Log.e("getPathFromUri", "无法解析docId格式: $docId")
+            null
+        }
     }
+    
+    android.util.Log.d("getPathFromUri", "最终路径: $result")
+    return result
 }
 
 // ==================== 扫描结果弹窗 ====================
