@@ -457,7 +457,9 @@ fun BookPlayerScreen(
                                             currentIndex = currentSubtitleIndex,
                                             positionMs = positionMs,
                                             listState = lyricsListState,
-                                            assContent = assRawContent
+                                            assContent = assRawContent,
+                                            playResX = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResX ?: 384,
+                                            playResY = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResY ?: 288
                                         )
                                     } else {
                                         SrtLyricsView(

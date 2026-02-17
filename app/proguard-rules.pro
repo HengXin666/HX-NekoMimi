@@ -21,3 +21,10 @@
 # 保留数据类
 -keep class com.hx.nekomimi.data.db.entity.** { *; }
 -keep class com.hx.nekomimi.subtitle.model.** { *; }
+
+# libass JNI 渲染器 (native 方法不能被混淆)
+-keep class com.hx.nekomimi.subtitle.AssRenderer { *; }
+-keepclassmembers class com.hx.nekomimi.subtitle.AssRenderer {
+    native <methods>;
+    public <methods>;
+}

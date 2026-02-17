@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
@@ -27,7 +28,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -42,13 +45,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.player.PlayMode
 import com.hx.nekomimi.player.PlayerManager
+import com.hx.nekomimi.subtitle.AssRenderer
 import com.hx.nekomimi.subtitle.SubtitleManager
 import com.hx.nekomimi.subtitle.model.AssEffect
 import com.hx.nekomimi.subtitle.model.AssStyle
 import com.hx.nekomimi.subtitle.model.SubtitleCue
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
@@ -294,14 +300,16 @@ fun MusicPlayerScreen(
                             }
                         }
                     } else if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
-                        // ASS 歌词 (带特效渲染)
+                        // ASS 歌词 (libass 原生渲染)
                         AssLyricsView(
                             cues = cues,
                             styles = assStyles,
                             currentIndex = currentIndex,
                             positionMs = positionMs,
                             listState = listState,
-                            assContent = assRawContent
+                            assContent = assRawContent,
+                            playResX = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResX ?: 384,
+                            playResY = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResY ?: 288
                         )
                     } else {
                         // SRT 歌词 (简洁列表)
@@ -544,8 +552,14 @@ fun SrtLyricsView(
 }
 
 /**
- * ASS 歌词视图 (支持特效渲染)
- * @param assContent ASS 文件原始内容，用于 libass 渲染（可选）
+ * ASS 歌词视图 - 使用 libass 原生渲染
+ *
+ * 优先使用 libass 将整个 ASS 文件渲染为位图，完美支持所有特效。
+ * 如果 libass 不可用，自动回退到纯 Compose 文本渲染。
+ *
+ * @param assContent ASS 文件原始内容
+ * @param playResX ASS 视频分辨率宽度
+ * @param playResY ASS 视频分辨率高度
  */
 @Composable
 fun AssLyricsView(
@@ -554,7 +568,129 @@ fun AssLyricsView(
     currentIndex: Int,
     positionMs: Long,
     listState: androidx.compose.foundation.lazy.LazyListState,
-    assContent: String = ""
+    assContent: String = "",
+    playResX: Int = 384,
+    playResY: Int = 288
+) {
+    // 尝试使用 libass 原生渲染
+    if (assContent.isNotEmpty() && AssRenderer.isAvailable) {
+        LibassLyricsView(
+            assContent = assContent,
+            positionMs = positionMs,
+            playResX = playResX,
+            playResY = playResY
+        )
+    } else {
+        // 回退: 纯 Compose 文本渲染
+        AssLyricsViewFallback(
+            cues = cues,
+            styles = styles,
+            currentIndex = currentIndex,
+            positionMs = positionMs,
+            listState = listState
+        )
+    }
+}
+
+/**
+ * libass 原生渲染视图
+ * 将 ASS 字幕通过 libass 渲染为 Bitmap 并显示
+ */
+@Composable
+fun LibassLyricsView(
+    assContent: String,
+    positionMs: Long,
+    playResX: Int,
+    playResY: Int
+) {
+    // 获取显示区域尺寸
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
+    // 使用 ASS 的宽高比计算渲染高度
+    val renderHeight = remember(screenWidthPx, playResX, playResY) {
+        if (playResX > 0) (screenWidthPx.toLong() * playResY / playResX).toInt()
+        else (screenWidthPx * 3 / 4) // 默认 4:3
+    }
+
+    // 创建和管理 AssRenderer 实例
+    val renderer = remember { AssRenderer() }
+    var isReady by remember { mutableStateOf(false) }
+
+    // 初始化 renderer 和加载 track
+    LaunchedEffect(assContent) {
+        withContext(Dispatchers.IO) {
+            try {
+                renderer.destroy() // 清理旧资源
+                if (renderer.init()) {
+                    renderer.setFrameSize(screenWidthPx, renderHeight)
+                    isReady = renderer.loadTrack(assContent)
+                    if (isReady) {
+                        Log.i("AssLyricsView", "libass 初始化成功: ${screenWidthPx}x${renderHeight}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AssLyricsView", "libass 初始化失败", e)
+                isReady = false
+            }
+        }
+    }
+
+    // 生命周期清理
+    DisposableEffect(Unit) {
+        onDispose {
+            renderer.destroy()
+        }
+    }
+
+    // 渲染当前帧
+    val currentBitmap = remember { mutableStateOf<Bitmap?>(null) }
+    val currentRect = remember { mutableStateOf<IntArray?>(null) }
+
+    LaunchedEffect(positionMs, isReady) {
+        if (!isReady) return@LaunchedEffect
+        withContext(Dispatchers.Default) {
+            try {
+                val result = renderer.renderFrame(positionMs)
+                currentBitmap.value = result?.bitmap
+                currentRect.value = if (result != null) {
+                    intArrayOf(result.left, result.top, result.right, result.bottom)
+                } else null
+            } catch (e: Exception) {
+                Log.e("AssLyricsView", "渲染帧失败", e)
+            }
+        }
+    }
+
+    // 显示渲染结果
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        val bitmap = currentBitmap.value
+        if (bitmap != null && !bitmap.isRecycled) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "ASS 字幕",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight(),
+                contentScale = ContentScale.FillWidth
+            )
+        }
+    }
+}
+
+/**
+ * ASS 歌词回退视图 (纯 Compose 文本渲染, libass 不可用时使用)
+ */
+@Composable
+fun AssLyricsViewFallback(
+    cues: List<SubtitleCue>,
+    styles: Map<String, AssStyle>,
+    currentIndex: Int,
+    positionMs: Long,
+    listState: androidx.compose.foundation.lazy.LazyListState
 ) {
     LazyColumn(
         state = listState,
