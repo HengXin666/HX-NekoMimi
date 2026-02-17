@@ -272,7 +272,8 @@ build_libass() {
         -Dfontconfig=disabled \
         -Ddirectwrite=disabled \
         -Dcoretext=disabled \
-        -Dasm=disabled
+        -Dasm=disabled \
+        -Drequire-system-font-provider=false
     ninja -C builddir
     ninja -C builddir install
 }
