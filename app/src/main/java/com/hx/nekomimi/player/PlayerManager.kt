@@ -361,13 +361,13 @@ class PlayerManager @Inject constructor(
                 if (uriList.isNotEmpty()) {
                     Log.d("PlayerManager", "loadFolderAndPlay: SAF 模式, 扫描到 ${uriList.size} 个文件")
                     // 优先使用 targetUri 直接匹配，其次按文件名匹配
-                    val startUri = if (targetUri != null) {
+                    val startUri = (if (targetUri != null) {
                         uriList.firstOrNull { it == targetUri }
                             ?: run {
                                 Log.w("PlayerManager", "loadFolderAndPlay: targetUri=$targetUri 未在扫描列表中找到, 降级到文件名匹配")
                                 null
                             }
-                    } else null
+                    } else null)
                     ?: run {
                         // 从 filePath 中提取文件名来匹配 URI (降级方案)
                         val targetFileName = File(filePath).name
