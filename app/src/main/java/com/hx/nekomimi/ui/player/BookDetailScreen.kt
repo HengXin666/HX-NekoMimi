@@ -1,5 +1,6 @@
 package com.hx.nekomimi.ui.player
 
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,6 +29,7 @@ import com.hx.nekomimi.player.FolderScanResult
 import com.hx.nekomimi.player.PlayerManager
 import com.hx.nekomimi.ui.home.ScanResultDialog
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -38,15 +41,19 @@ import javax.inject.Inject
 
 /**
  * 文件夹项 (子文件夹或音频文件)
+ * 同时支持 File API 和 DocumentFile API (SAF)
  */
 data class FolderItem(
     val file: File,
     val isDirectory: Boolean,
-    val audioCount: Int = 0 // 子文件夹内音频数量
+    val audioCount: Int = 0, // 子文件夹内音频数量
+    /** DocumentFile URI (SAF 模式下使用) */
+    val documentUri: android.net.Uri? = null
 )
 
 @HiltViewModel
 class BookDetailViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     val playerManager: PlayerManager,
     private val repository: PlaybackRepository
 ) : ViewModel() {
@@ -150,20 +157,124 @@ class BookDetailViewModel @Inject constructor(
             if (existingBook.lastPlayedFilePath != null) {
                 lastMemory.value = repository.getMemory(existingBook.lastPlayedFilePath!!)
             }
-        }
 
-        loadFolderContent(folderPath)
+            // 在 folderUri 加载完成后再加载文件夹内容 (确保 DocumentFile API 可用)
+            loadFolderContent(folderPath)
+        }
     }
 
     /**
      * 加载文件夹内容
+     * 优先使用 DocumentFile API (SAF) 以支持分区存储和隐藏文件夹
+     * 如果 DocumentFile API 不可用，则降级使用 File API
      */
     fun loadFolderContent(path: String) {
         currentBrowsePath.value = path
+
+        // 优先尝试 DocumentFile API (SAF)
+        val uri = folderUri.value
+        if (uri != null) {
+            loadFolderContentViaSAF(path, uri)
+            return
+        }
+
+        // 降级: 使用 File API
+        loadFolderContentViaFile(path)
+    }
+
+    /**
+     * 通过 DocumentFile API 加载文件夹内容 (支持分区存储)
+     */
+    private fun loadFolderContentViaSAF(path: String, rootUri: android.net.Uri) {
+        viewModelScope.launch {
+            val items = withContext(Dispatchers.IO) {
+                val result = mutableListOf<FolderItem>()
+                val rootPath = rootFolderPath.value ?: path
+
+                // 计算相对路径 (如果浏览的是子文件夹)
+                val relativePath = if (path != rootPath) {
+                    path.removePrefix(rootPath).trimStart('/')
+                } else {
+                    ""
+                }
+
+                // 从 rootUri 导航到目标子文件夹
+                val targetDoc = if (relativePath.isEmpty()) {
+                    DocumentFile.fromTreeUri(appContext, rootUri)
+                } else {
+                    var currentDoc = DocumentFile.fromTreeUri(appContext, rootUri)
+                    for (segment in relativePath.split("/")) {
+                        currentDoc = currentDoc?.listFiles()?.find {
+                            it.name == segment && it.isDirectory
+                        }
+                        if (currentDoc == null) break
+                    }
+                    currentDoc
+                }
+
+                if (targetDoc == null || !targetDoc.exists()) {
+                    // SAF 无法导航到目标，降级到 File API
+                    return@withContext loadFolderContentViaFileSync(path)
+                }
+
+                val children = targetDoc.listFiles()
+
+                // 子文件夹
+                children
+                    .filter { it.isDirectory }
+                    .sortedBy { it.name }
+                    .forEach { folder ->
+                        val name = folder.name ?: return@forEach
+                        val count = countAudioFilesRecursiveDoc(folder)
+                        if (count > 0) {
+                            // 创建 File 对象用于兼容现有 UI
+                            val folderFile = File(path, name)
+                            result.add(FolderItem(
+                                file = folderFile,
+                                isDirectory = true,
+                                audioCount = count,
+                                documentUri = folder.uri
+                            ))
+                        }
+                    }
+
+                // 音频文件
+                children
+                    .filter { it.isFile }
+                    .sortedBy { it.name }
+                    .forEach { file ->
+                        val name = file.name ?: return@forEach
+                        val ext = name.substringAfterLast('.', "").lowercase()
+                        if (ext in supportedExtensions) {
+                            val audioFile = File(path, name)
+                            result.add(FolderItem(
+                                file = audioFile,
+                                isDirectory = false,
+                                documentUri = file.uri
+                            ))
+                        }
+                    }
+
+                result
+            }
+            folderItems.value = items
+        }
+    }
+
+    /**
+     * 通过 File API 加载文件夹内容 (降级方案)
+     */
+    private fun loadFolderContentViaFile(path: String) {
+        folderItems.value = loadFolderContentViaFileSync(path)
+    }
+
+    /**
+     * 同步 File API 加载 (可被协程调用)
+     */
+    private fun loadFolderContentViaFileSync(path: String): List<FolderItem> {
         val dir = File(path)
         if (!dir.exists() || !dir.isDirectory) {
-            folderItems.value = emptyList()
-            return
+            return emptyList()
         }
 
         val children = dir.listFiles() ?: emptyArray()
@@ -188,7 +299,24 @@ class BookDetailViewModel @Inject constructor(
                 items.add(FolderItem(file, isDirectory = false))
             }
 
-        folderItems.value = items
+        return items
+    }
+
+    /**
+     * 递归统计 DocumentFile 下的音频文件数量
+     */
+    private fun countAudioFilesRecursiveDoc(dir: DocumentFile): Int {
+        var count = 0
+        for (child in dir.listFiles()) {
+            if (child.isFile) {
+                val name = child.name ?: continue
+                val ext = name.substringAfterLast('.', "").lowercase()
+                if (ext in supportedExtensions) count++
+            } else if (child.isDirectory) {
+                count += countAudioFilesRecursiveDoc(child)
+            }
+        }
+        return count
     }
 
     /**

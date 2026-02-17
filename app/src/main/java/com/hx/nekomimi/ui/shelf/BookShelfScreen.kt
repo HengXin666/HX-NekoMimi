@@ -71,7 +71,7 @@ class BookShelfViewModel @Inject constructor(
                 BookSortOrder.LAST_UPDATED -> repository.getAllBooksByLastUpdated()
             }
         }
-        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val toastMessage = MutableStateFlow<String?>(null)
 
@@ -132,8 +132,13 @@ class BookShelfViewModel @Inject constructor(
     /** 删除书 */
     fun deleteBook(book: Book) {
         viewModelScope.launch {
-            repository.deleteBook(book.id)
-            toastMessage.value = "已移除: ${book.title}"
+            try {
+                repository.deleteBook(book.id)
+                toastMessage.value = "已移除: ${book.title}"
+            } catch (e: Exception) {
+                android.util.Log.e("BookShelfVM", "删除书失败: ${book.title}", e)
+                toastMessage.value = "删除失败: ${e.message}"
+            }
         }
     }
 
@@ -235,15 +240,15 @@ fun BookShelfScreen(
         )
     }
 
-    if (bookToDelete != null) {
+    bookToDelete?.let { targetBook ->
         AlertDialog(
             onDismissRequest = { bookToDelete = null },
             title = { Text("移除有声书") },
-            text = { Text("确定要从书架移除「${bookToDelete!!.title}」吗？\n（不会删除实际文件）") },
+            text = { Text("确定要从书架移除「${targetBook.title}」吗？\n（不会删除实际文件）") },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteBook(bookToDelete!!)
                     bookToDelete = null
+                    viewModel.deleteBook(targetBook)
                 }) {
                     Text("移除", color = MaterialTheme.colorScheme.error)
                 }
