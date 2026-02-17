@@ -272,8 +272,14 @@ build_libass() {
     mkdir -p "$SRC/_build"
     cd "$SRC/_build"
 
-    # 确保 pkg-config 能找到 freetype2, fribidi, harfbuzz
-    export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
+    # 直接设置 *_CFLAGS 和 *_LIBS 环境变量, 绕过 pkg-config
+    # (因为 freetype2.pc 引用了 zlib, 但交叉编译环境下 zlib.pc 不存在)
+    export FREETYPE_CFLAGS="-I${PREFIX}/include/freetype2"
+    export FREETYPE_LIBS="-L${PREFIX}/lib -lfreetype -lz"
+    export HARFBUZZ_CFLAGS="-I${PREFIX}/include/harfbuzz"
+    export HARFBUZZ_LIBS="-L${PREFIX}/lib -lharfbuzz"
+    export FRIBIDI_CFLAGS="-I${PREFIX}/include/fribidi"
+    export FRIBIDI_LIBS="-L${PREFIX}/lib -lfribidi"
 
     ../configure \
         --host="${HOST}" \
