@@ -40,9 +40,11 @@ import com.hx.nekomimi.player.PlayerManager
 import com.hx.nekomimi.subtitle.SubtitleManager
 import com.hx.nekomimi.subtitle.model.SubtitleCue
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
@@ -107,30 +109,46 @@ class BookPlayerViewModel @Inject constructor(
         // 监听文件变化，自动加载字幕
         viewModelScope.launch {
             playerManager.currentFilePath.filterNotNull().distinctUntilChanged().collect { path ->
-                val folderUri = playerManager.currentFolderUri.value
-                val result = if (folderUri != null) {
-                    // 使用 URI 方式加载 (支持隐藏文件夹)
-                    // 注意: 使用 currentFileName (原始文件名) 而非 currentDisplayName (可能被元信息标题覆盖)
-                    val fileName = playerManager.currentFileName.value ?: return@collect
-                    SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
-                } else {
-                    // 使用文件路径方式加载
-                    SubtitleManager.loadForAudio(path)
-                }
-                subtitleResult.value = result
-                when (result) {
-                    is SubtitleManager.SubtitleResult.Ass -> {
-                        cues.value = emptyList() // ASS 完全由 libass 渲染
-                        assRawContent.value = result.rawContent
+                try {
+                    // 字幕加载涉及文件IO操作，在IO线程执行防止ANR
+                    val result = withContext(Dispatchers.IO) {
+                        val folderUri = playerManager.currentFolderUri.value
+                        if (folderUri != null) {
+                            // 使用 URI 方式加载 (支持隐藏文件夹)
+                            // 注意: 使用 currentFileName (原始文件名) 而非 currentDisplayName (可能被元信息标题覆盖)
+                            val fileName = playerManager.currentFileName.value
+                                ?: return@withContext SubtitleManager.SubtitleResult.None
+                            SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
+                        } else {
+                            // 使用文件路径方式加载 (跳过非文件路径，如 URI 字符串)
+                            if (path.startsWith("content://") || path.startsWith("file://")) {
+                                SubtitleManager.SubtitleResult.None
+                            } else {
+                                SubtitleManager.loadForAudio(path)
+                            }
+                        }
                     }
-                    is SubtitleManager.SubtitleResult.Srt -> {
-                        cues.value = result.cues
-                        assRawContent.value = ""
+                    subtitleResult.value = result
+                    when (result) {
+                        is SubtitleManager.SubtitleResult.Ass -> {
+                            cues.value = emptyList() // ASS 完全由 libass 渲染
+                            assRawContent.value = result.rawContent
+                        }
+                        is SubtitleManager.SubtitleResult.Srt -> {
+                            cues.value = result.cues
+                            assRawContent.value = ""
+                        }
+                        SubtitleManager.SubtitleResult.None -> {
+                            cues.value = emptyList()
+                            assRawContent.value = ""
+                        }
                     }
-                    SubtitleManager.SubtitleResult.None -> {
-                        cues.value = emptyList()
-                        assRawContent.value = ""
-                    }
+                } catch (e: Exception) {
+                    // 字幕加载失败不应导致闪退，静默降级为无字幕
+                    android.util.Log.e("BookPlayerVM", "字幕加载异常: ${e.message}", e)
+                    subtitleResult.value = SubtitleManager.SubtitleResult.None
+                    cues.value = emptyList()
+                    assRawContent.value = ""
                 }
             }
         }

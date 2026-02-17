@@ -740,8 +740,9 @@ class PlayerManager @Inject constructor(
         positionSaveJob = scope.launch {
             var saveCounter = 0
             while (isActive) {
-                val pos = player.currentPosition.coerceAtLeast(0)
-                val dur = player.duration.coerceAtLeast(0)
+                val p = _player ?: break // player 已释放则停止追踪，避免意外创建新实例
+                val pos = p.currentPosition.coerceAtLeast(0)
+                val dur = p.duration.coerceAtLeast(0)
                 _positionMs.value = pos
                 _durationMs.value = dur
 
@@ -790,33 +791,50 @@ class PlayerManager @Inject constructor(
 
     /** 同步保存当前位置 (暂停/切换/退出时调用) */
     fun saveCurrentPositionSync() {
-        val filePath = _currentFilePath.value ?: return
-        val pos = _player?.currentPosition?.coerceAtLeast(0) ?: return
-        val dur = _player?.duration?.coerceAtLeast(0) ?: return
-        val folder = _currentFolderPath.value ?: ""
-        val name = _currentDisplayName.value ?: ""
+        try {
+            val filePath = _currentFilePath.value ?: return
+            val pos = _player?.currentPosition?.coerceAtLeast(0) ?: return
+            val dur = _player?.duration?.coerceAtLeast(0) ?: return
+            val folder = _currentFolderPath.value ?: ""
+            val name = _currentDisplayName.value ?: ""
 
-        // SharedPreferences 快照 (同步，不会丢)
-        repository.saveQuickSnapshot(filePath, pos, dur, folder, name)
+            // SharedPreferences 快照 (同步，不会丢)
+            repository.saveQuickSnapshot(filePath, pos, dur, folder, name)
 
-        // Room 数据库 (异步)
-        scope.launch {
-            repository.saveMemory(filePath, pos, dur, folder, name)
+            // Room 数据库 (异步)
+            scope.launch {
+                try {
+                    repository.saveMemory(filePath, pos, dur, folder, name)
+                } catch (e: Exception) {
+                    Log.e("PlayerManager", "saveMemory 异常: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            // player 正在释放或 scope 已取消时，安全忽略
+            Log.e("PlayerManager", "saveCurrentPositionSync 异常: ${e.message}")
         }
     }
 
     private suspend fun savePositionToDb(positionMs: Long, durationMs: Long) {
-        val filePath = _currentFilePath.value ?: return
-        val folder = _currentFolderPath.value ?: ""
-        val name = _currentDisplayName.value ?: ""
-        repository.saveMemory(filePath, positionMs, durationMs, folder, name)
+        try {
+            val filePath = _currentFilePath.value ?: return
+            val folder = _currentFolderPath.value ?: ""
+            val name = _currentDisplayName.value ?: ""
+            repository.saveMemory(filePath, positionMs, durationMs, folder, name)
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "savePositionToDb 异常: ${e.message}")
+        }
     }
 
     private fun savePositionToSnapshot(positionMs: Long, durationMs: Long) {
-        val filePath = _currentFilePath.value ?: return
-        val folder = _currentFolderPath.value ?: ""
-        val name = _currentDisplayName.value ?: ""
-        repository.saveQuickSnapshot(filePath, positionMs, durationMs, folder, name)
+        try {
+            val filePath = _currentFilePath.value ?: return
+            val folder = _currentFolderPath.value ?: ""
+            val name = _currentDisplayName.value ?: ""
+            repository.saveQuickSnapshot(filePath, positionMs, durationMs, folder, name)
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "savePositionToSnapshot 异常: ${e.message}")
+        }
     }
 
     /**
