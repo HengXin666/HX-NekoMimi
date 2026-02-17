@@ -76,7 +76,8 @@ class MusicPlayerViewModel @Inject constructor(
                 val folderUri = playerManager.currentFolderUri.value
                 val result = if (folderUri != null) {
                     // 使用 URI 方式加载 (支持隐藏文件夹)
-                    val fileName = playerManager.currentDisplayName.value ?: return@collect
+                    // 注意: 使用 currentFileName (原始文件名) 而非 currentDisplayName (可能被元信息标题覆盖)
+                    val fileName = playerManager.currentFileName.value ?: return@collect
                     SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
                 } else {
                     // 使用文件路径方式加载
@@ -681,16 +682,22 @@ fun LibassLyricsView(
             }
         }
 
-        // 生命周期清理
+        // 渲染当前帧 (Bitmap 安全复制)
+        var displayBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+        // 生命周期清理 (必须在 displayBitmap 声明之后，确保 onDispose 能访问到)
         DisposableEffect(Unit) {
             onDispose {
                 rendererHolder.ready = false
                 rendererHolder.renderer.destroy()
+                // 回收最后一帧的显示 Bitmap，防止内存泄漏
+                val bmp = displayBitmap
+                displayBitmap = null
+                if (bmp != null && !bmp.isRecycled) {
+                    bmp.recycle()
+                }
             }
         }
-
-        // 渲染当前帧 (Bitmap 安全复制)
-        var displayBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
         LaunchedEffect(positionMs, isReady, screenWidthPx, renderHeight) {
             if (!isReady || !rendererHolder.ready) return@LaunchedEffect

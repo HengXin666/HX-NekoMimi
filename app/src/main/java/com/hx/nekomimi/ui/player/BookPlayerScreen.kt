@@ -112,7 +112,8 @@ class BookPlayerViewModel @Inject constructor(
                 val folderUri = playerManager.currentFolderUri.value
                 val result = if (folderUri != null) {
                     // 使用 URI 方式加载 (支持隐藏文件夹)
-                    val fileName = playerManager.currentDisplayName.value ?: return@collect
+                    // 注意: 使用 currentFileName (原始文件名) 而非 currentDisplayName (可能被元信息标题覆盖)
+                    val fileName = playerManager.currentFileName.value ?: return@collect
                     SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
                 } else {
                     // 使用文件路径方式加载
@@ -182,11 +183,17 @@ class BookPlayerViewModel @Inject constructor(
         if (memory.filePath == playerManager.currentFilePath.value) {
             playerManager.seekTo(memory.positionMs)
         } else {
-            // 传递当前的 folderUri，确保 SAF 模式下也能正常播放
+            // 只有记忆所属文件夹与当前播放文件夹相同时，才传递 folderUri
+            // 否则传 null 降级到 File API，避免使用错误的 SAF 授权
+            val folderUri = if (memory.folderPath == playerManager.currentFolderPath.value) {
+                playerManager.currentFolderUri.value
+            } else {
+                null
+            }
             playerManager.loadFolderAndPlay(
                 memory.folderPath,
                 memory.filePath,
-                folderUri = playerManager.currentFolderUri.value
+                folderUri = folderUri
             )
         }
     }

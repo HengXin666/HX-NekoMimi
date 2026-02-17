@@ -135,9 +135,13 @@ class PlayerManager @Inject constructor(
     private val _currentFolderUri = MutableStateFlow<android.net.Uri?>(null)
     val currentFolderUri: StateFlow<android.net.Uri?> = _currentFolderUri.asStateFlow()
 
-    /** 当前文件显示名称 */
+    /** 当前文件显示名称 (可能被媒体元信息标题覆盖) */
     private val _currentDisplayName = MutableStateFlow<String?>(null)
     val currentDisplayName: StateFlow<String?> = _currentDisplayName.asStateFlow()
+
+    /** 当前文件的原始文件名 (不含扩展名, 永远不会被元信息覆盖, 用于字幕匹配等) */
+    private val _currentFileName = MutableStateFlow<String?>(null)
+    val currentFileName: StateFlow<String?> = _currentFileName.asStateFlow()
 
     /** 是否正在播放 */
     private val _isPlaying = MutableStateFlow(false)
@@ -151,9 +155,13 @@ class PlayerManager @Inject constructor(
     private val _durationMs = MutableStateFlow(0L)
     val durationMs: StateFlow<Long> = _durationMs.asStateFlow()
 
-    /** 播放列表 (当前文件夹下的所有音频) */
+    /** 播放列表 (当前文件夹下的所有音频, File API 模式) */
     private val _playlist = MutableStateFlow<List<File>>(emptyList())
     val playlist: StateFlow<List<File>> = _playlist.asStateFlow()
+
+    /** URI 播放列表 (SAF 模式, 与 _playlist 互斥使用) */
+    private val _uriPlaylist = MutableStateFlow<List<Uri>>(emptyList())
+    val uriPlaylist: StateFlow<List<Uri>> = _uriPlaylist.asStateFlow()
 
     /** 当前播放索引 */
     private val _currentIndex = MutableStateFlow(-1)
@@ -250,14 +258,31 @@ class PlayerManager @Inject constructor(
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     // 播放列表切换时更新文件信息
                     val idx = currentMediaItemIndex
+                    _currentIndex.value = idx
+
+                    // 优先检查 File 模式播放列表
                     val files = _playlist.value
                     if (idx in files.indices) {
                         val file = files[idx]
                         _currentFilePath.value = file.absolutePath
                         _currentDisplayName.value = file.nameWithoutExtension
-                        _currentIndex.value = idx
+                        _currentFileName.value = file.nameWithoutExtension
                         // 切歌时加载新歌曲的元信息 (封面、歌手、专辑)
                         loadCurrentTrackMetadata(file)
+                        return
+                    }
+
+                    // URI 模式播放列表 (SAF 隐藏文件夹)
+                    val uris = _uriPlaylist.value
+                    if (idx in uris.indices) {
+                        val uri = uris[idx]
+                        _currentFilePath.value = uri.toString()
+                        val fileName = extractFileNameFromUri(uri)
+                        val fileNameNoExt = fileName.substringBeforeLast('.')
+                        _currentDisplayName.value = fileNameNoExt
+                        _currentFileName.value = fileNameNoExt
+                        // 切歌时加载新歌曲的元信息 (封面、歌手、专辑)
+                        loadCurrentTrackMetadataFromUri(context, uri)
                     }
                 }
             })
@@ -324,8 +349,9 @@ class PlayerManager @Inject constructor(
      * 加载文件夹并播放指定文件 (递归扫描子文件夹)
      * 当有 folderUri 时，优先使用 SAF DocumentFile 扫描 (支持隐藏文件夹和分区存储)
      * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
+     * @param targetUri 目标文件的 SAF URI (直接匹配，避免依赖文件名)
      */
-    fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null) {
+    fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null, targetUri: android.net.Uri? = null) {
         // 优先尝试 SAF 方式 (支持隐藏文件夹、分区存储)
         if (folderUri != null) {
             val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
@@ -334,12 +360,28 @@ class PlayerManager @Inject constructor(
                 scanDocumentFileUrisRecursive(treeDoc, uriList)
                 if (uriList.isNotEmpty()) {
                     Log.d("PlayerManager", "loadFolderAndPlay: SAF 模式, 扫描到 ${uriList.size} 个文件")
-                    // 从 filePath 中提取文件名来匹配 URI
-                    val targetFileName = File(filePath).name
-                    val startUri = uriList.firstOrNull { uri ->
-                        val uriName = uri.lastPathSegment?.substringAfterLast('/') ?: ""
-                        uriName == targetFileName
-                    } ?: uriList.first()
+                    // 优先使用 targetUri 直接匹配，其次按文件名匹配
+                    val startUri = if (targetUri != null) {
+                        uriList.firstOrNull { it == targetUri }
+                            ?: run {
+                                Log.w("PlayerManager", "loadFolderAndPlay: targetUri=$targetUri 未在扫描列表中找到, 降级到文件名匹配")
+                                null
+                            }
+                    } else null
+                    ?: run {
+                        // 从 filePath 中提取文件名来匹配 URI (降级方案)
+                        val targetFileName = File(filePath).name
+                        Log.d("PlayerManager", "loadFolderAndPlay: 按文件名匹配, targetFileName=$targetFileName")
+                        uriList.firstOrNull { uri ->
+                            extractFileNameFromUri(uri).equals(targetFileName, ignoreCase = true)
+                        } ?: run {
+                            Log.w("PlayerManager", "loadFolderAndPlay: 文件名匹配失败 (targetFileName=$targetFileName), 可用URI列表:")
+                            uriList.take(5).forEachIndexed { i, uri ->
+                                Log.w("PlayerManager", "  [$i] ${extractFileNameFromUri(uri)} -> $uri")
+                            }
+                            uriList.first()
+                        }
+                    }
 
                     loadUrisAndPlay(
                         context = context,
@@ -364,6 +406,7 @@ class PlayerManager @Inject constructor(
         }
 
         _playlist.value = files
+        _uriPlaylist.value = emptyList() // 清除 URI 播放列表
         _currentFolderPath.value = folderPath
         _currentFolderUri.value = folderUri
         _currentPlaylistId.value = playlistId
@@ -372,6 +415,7 @@ class PlayerManager @Inject constructor(
         _currentIndex.value = startIndex
         _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
         _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
+        _currentFileName.value = files.getOrNull(startIndex)?.nameWithoutExtension
 
         val mediaItems = files.map { file -> createMediaItem(file) }
 
@@ -405,6 +449,7 @@ class PlayerManager @Inject constructor(
      */
     fun loadFilesAndPlay(files: List<File>, filePath: String, playlistFolderPath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null) {
         _playlist.value = files
+        _uriPlaylist.value = emptyList() // 清除 URI 播放列表
         _currentFolderPath.value = playlistFolderPath
         _currentFolderUri.value = folderUri
         _currentPlaylistId.value = playlistId
@@ -413,6 +458,7 @@ class PlayerManager @Inject constructor(
         _currentIndex.value = startIndex
         _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
         _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
+        _currentFileName.value = files.getOrNull(startIndex)?.nameWithoutExtension
 
         val mediaItems = files.map { file -> createMediaItem(file) }
 
@@ -457,6 +503,8 @@ class PlayerManager @Inject constructor(
         playlistId: Long? = null,
         folderUri: android.net.Uri? = null
     ) {
+        _uriPlaylist.value = uris // 设置 URI 播放列表
+        _playlist.value = emptyList() // 清除 File 播放列表
         _currentFolderPath.value = playlistFolderPath
         _currentFolderUri.value = folderUri
         _currentPlaylistId.value = playlistId
@@ -465,7 +513,11 @@ class PlayerManager @Inject constructor(
         _currentIndex.value = startIndex
         _currentFilePath.value = startUri.toString()
         // 从 URI 提取文件名
-        _currentDisplayName.value = startUri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "Unknown"
+        val fileName = extractFileNameFromUri(startUri)
+        val fileNameNoExt = fileName.substringBeforeLast('.')
+        _currentDisplayName.value = fileNameNoExt
+        _currentFileName.value = fileNameNoExt
+        Log.d("PlayerManager", "loadUrisAndPlay: ${uris.size} 个URI, startIndex=$startIndex, fileName=$fileName")
 
         val mediaItems = uris.map { uri -> createMediaItemFromUri(context, uri) }
 
@@ -592,6 +644,7 @@ class PlayerManager @Inject constructor(
             _currentIndex.value = index
             _currentFilePath.value = files[index].absolutePath
             _currentDisplayName.value = files[index].nameWithoutExtension
+            _currentFileName.value = files[index].nameWithoutExtension
 
             player.seekTo(index, 0)
 
@@ -1213,6 +1266,23 @@ class PlayerManager @Inject constructor(
         } catch (e: Exception) {
             // 忽略启动失败 (例如后台启动限制)
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * 从 URI 提取文件名 (支持 SAF content:// URI 和普通 file:// URI)
+     * SAF URI 的 lastPathSegment 格式通常为 "primary:path/to/file.mp3"
+     */
+    private fun extractFileNameFromUri(uri: Uri): String {
+        val lastSegment = uri.lastPathSegment ?: return "unknown"
+        // SAF URI: lastPathSegment 可能是 "primary:Download/.hidden/audio.mp3"
+        // 需要取最后一个 '/' 后面的部分
+        val name = lastSegment.substringAfterLast('/')
+        // URL 解码 (处理 %20 等编码字符)
+        return try {
+            java.net.URLDecoder.decode(name, "UTF-8")
+        } catch (e: Exception) {
+            name
         }
     }
 

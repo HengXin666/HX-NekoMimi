@@ -337,52 +337,60 @@ class BookDetailViewModel @Inject constructor(
 
     /**
      * 播放指定文件 (并设置听书模式)
+     * @param item 文件夹项 (包含 File 和可选的 documentUri)
      */
-    fun playFile(file: File) {
+    fun playFile(item: FolderItem) {
         val browsePath = currentBrowsePath.value ?: return
         playerManager.setAudioBookMode(true)
-        playerManager.loadFolderAndPlay(browsePath, file.absolutePath, folderUri = folderUri.value)
+        playerManager.loadFolderAndPlay(
+            browsePath,
+            item.file.absolutePath,
+            folderUri = folderUri.value,
+            targetUri = item.documentUri
+        )
 
         // 更新书的最近播放信息
         val root = rootFolderPath.value ?: return
         viewModelScope.launch {
             repository.updateBookLastPlayed(
                 folderPath = root,
-                filePath = file.absolutePath,
+                filePath = item.file.absolutePath,
                 positionMs = 0,
                 durationMs = 0,
-                displayName = file.nameWithoutExtension
+                displayName = item.file.nameWithoutExtension
             )
         }
     }
 
     /**
      * 从记忆位置继续播放
+     *
+     * SAF 模式: 使用 rootPath + folderUri 从根目录递归扫描 (SAF 必须从 tree URI 根开始)
+     * File API 模式: 同样使用 rootPath 递归扫描 (保持行为一致，确保播放列表包含所有音频)
      */
     fun resumeFromMemory() {
         val bookVal = book.value ?: return
         val filePath = bookVal.lastPlayedFilePath ?: return
+        val rootPath = rootFolderPath.value ?: return
         val uri = folderUri.value
 
         // SAF 模式: 不做 File.exists() 检查（分区存储下 File API 可能无法访问）
         if (uri != null) {
-            // 使用 loadFolderAndPlay（已支持 SAF 降级扫描）
-            val rootPath = rootFolderPath.value ?: return
             playerManager.setAudioBookMode(true)
             playerManager.loadFolderAndPlay(rootPath, filePath, folderUri = uri)
             return
         }
 
-        // File API 模式
+        // File API 模式: 先检查文件是否存在
         val file = File(filePath)
         if (!file.exists()) {
             toastMessage.value = "文件不存在"
             return
         }
 
-        val folder = file.parentFile?.absolutePath ?: return
+        // 使用 rootPath 递归扫描 (与 SAF 模式保持一致，播放列表包含书的所有音频)
         playerManager.setAudioBookMode(true)
-        playerManager.loadFolderAndPlay(folder, filePath, folderUri = null)
+        playerManager.loadFolderAndPlay(rootPath, filePath, folderUri = null)
     }
 
     /**
@@ -728,7 +736,7 @@ fun BookDetailScreen(
                             }
                         },
                         modifier = Modifier.clickable {
-                            viewModel.playFile(item.file)
+                            viewModel.playFile(item)
                             onNavigateToPlayer()
                         }
                     )
