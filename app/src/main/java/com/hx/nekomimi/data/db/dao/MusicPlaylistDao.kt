@@ -23,6 +23,10 @@ interface MusicPlaylistDao {
     @Query("SELECT * FROM music_playlist WHERE folderPath = :folderPath LIMIT 1")
     suspend fun getByFolderPath(folderPath: String): MusicPlaylist?
 
+    /** 根据 folderUri 获取歌单 */
+    @Query("SELECT * FROM music_playlist WHERE folderUri = :folderUri LIMIT 1")
+    suspend fun getByFolderUri(folderUri: String): MusicPlaylist?
+
     /** 根据 ID 获取歌单 */
     @Query("SELECT * FROM music_playlist WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): MusicPlaylist?
@@ -34,6 +38,10 @@ interface MusicPlaylistDao {
     /** 更新歌曲数量 */
     @Query("UPDATE music_playlist SET trackCount = :count WHERE id = :id")
     suspend fun updateTrackCount(id: Long, count: Int)
+
+    /** 更新 folderUri */
+    @Query("UPDATE music_playlist SET folderUri = :folderUri WHERE id = :id")
+    suspend fun updateFolderUri(id: Long, folderUri: String?)
 
     /** 更新最近播放时间 */
     @Query("UPDATE music_playlist SET lastPlayedAt = :time WHERE id = :id")

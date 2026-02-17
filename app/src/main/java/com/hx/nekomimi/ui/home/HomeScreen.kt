@@ -94,17 +94,23 @@ class MusicHomeViewModel @Inject constructor(
             }
             _scanResult.value = result
             _isScanning.value = false
-            // 创建歌单 (使用路径作为标识)
-            repository.importPlaylist(folderPath, result.doneCount)
+            // 创建歌单 (使用路径作为标识，同时保存 URI)
+            repository.importPlaylist(folderPath, result.doneCount, folderUri.toString())
         }
     }
 
     /** 刷新歌单: 重新递归扫描并显示扫描结果弹窗 */
-    fun refreshPlaylistWithScan(playlist: MusicPlaylist) {
+    fun refreshPlaylistWithScan(context: android.content.Context, playlist: MusicPlaylist) {
         viewModelScope.launch {
             _isScanning.value = true
             val result = withContext(Dispatchers.IO) {
-                playerManager.scanFolderWithResult(playlist.folderPath)
+                // 优先使用 URI 扫描 (解决隐藏文件夹无法用 File API 访问的问题)
+                if (playlist.folderUri != null) {
+                    val uri = android.net.Uri.parse(playlist.folderUri)
+                    playerManager.scanFolderWithResult(context, uri)
+                } else {
+                    playerManager.scanFolderWithResult(playlist.folderPath)
+                }
             }
             _scanResult.value = result
             _isScanning.value = false
@@ -114,11 +120,18 @@ class MusicHomeViewModel @Inject constructor(
     }
 
     /** 打开歌单，加载歌曲列表 */
-    fun openPlaylist(playlist: MusicPlaylist) {
+    fun openPlaylist(context: android.content.Context, playlist: MusicPlaylist) {
         _currentPlaylist.value = playlist
         _isLoadingTracks.value = true
         viewModelScope.launch {
-            val infos = playerManager.loadFolderTrackInfos(playlist.folderPath)
+            val infos = if (playlist.folderUri != null) {
+                // 使用 URI 加载 (支持隐藏文件夹)
+                val uri = android.net.Uri.parse(playlist.folderUri)
+                playerManager.loadFolderTrackInfos(context, uri)
+            } else {
+                // 使用路径加载
+                playerManager.loadFolderTrackInfos(playlist.folderPath)
+            }
             _trackInfos.value = infos
             _isLoadingTracks.value = false
             // 更新歌曲数量
@@ -135,15 +148,33 @@ class MusicHomeViewModel @Inject constructor(
     }
 
     /** 播放歌曲 */
-    fun playTrack(trackInfo: TrackInfo) {
+    fun playTrack(context: android.content.Context, trackInfo: TrackInfo) {
         val playlist = _currentPlaylist.value ?: return
-        val files = _trackInfos.value.map { it.file }
-        playerManager.loadFilesAndPlay(
-            files = files,
-            filePath = trackInfo.file.absolutePath,
-            playlistFolderPath = playlist.folderPath,
-            playlistId = playlist.id
-        )
+        
+        // 检查是否有 URI 方式的文件
+        val hasUriFiles = _trackInfos.value.any { it.fileUri != null }
+        
+        if (hasUriFiles && playlist.folderUri != null) {
+            // 使用 URI 方式播放 (支持隐藏文件夹)
+            val uris = _trackInfos.value.map { it.fileUri ?: android.net.Uri.fromFile(it.file) }
+            val startUri = trackInfo.fileUri ?: android.net.Uri.fromFile(trackInfo.file)
+            playerManager.loadUrisAndPlay(
+                context = context,
+                uris = uris,
+                startUri = startUri,
+                playlistFolderPath = playlist.folderPath,
+                playlistId = playlist.id
+            )
+        } else {
+            // 使用文件路径方式播放
+            val files = _trackInfos.value.map { it.file }
+            playerManager.loadFilesAndPlay(
+                files = files,
+                filePath = trackInfo.file.absolutePath,
+                playlistFolderPath = playlist.folderPath,
+                playlistId = playlist.id
+            )
+        }
     }
 
     /** 删除歌单 */
@@ -281,6 +312,7 @@ private fun PlaylistListView(
     onImportFolder: () -> Unit,
     currentFile: String?
 ) {
+    val context = LocalContext.current
     val playlists by viewModel.playlists.collectAsStateWithLifecycle(initialValue = emptyList())
     val deleteTarget by remember { viewModel.showDeleteDialog }
 
@@ -354,9 +386,9 @@ private fun PlaylistListView(
                 items(playlists, key = { it.id }) { playlist ->
                     PlaylistItem(
                         playlist = playlist,
-                        onClick = { viewModel.openPlaylist(playlist) },
+                        onClick = { viewModel.openPlaylist(context, playlist) },
                         onLongClick = { viewModel.showDeleteDialog.value = playlist },
-                        onRefresh = { viewModel.refreshPlaylistWithScan(playlist) }
+                        onRefresh = { viewModel.refreshPlaylistWithScan(context, playlist) }
                     )
                 }
             }
@@ -475,6 +507,7 @@ private fun PlaylistDetailView(
     onNavigateToPlayer: () -> Unit,
     currentFile: String?
 ) {
+    val context = LocalContext.current
     val trackInfos by viewModel.trackInfos.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoadingTracks.collectAsStateWithLifecycle()
     val isPlaying by viewModel.playerManager.isPlaying.collectAsStateWithLifecycle()
@@ -570,13 +603,13 @@ private fun PlaylistDetailView(
                     .padding(padding),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
-                items(trackInfos, key = { it.file.absolutePath }) { trackInfo ->
+                items(trackInfos, key = { it.fileUri?.toString() ?: it.file.absolutePath }) { trackInfo ->
                     TrackInfoItem(
                         trackInfo = trackInfo,
-                        isCurrent = currentFile == trackInfo.file.absolutePath,
-                        isPlaying = isPlaying && currentFile == trackInfo.file.absolutePath,
+                        isCurrent = currentFile == trackInfo.file.absolutePath || currentFile == trackInfo.fileUri?.toString(),
+                        isPlaying = isPlaying && (currentFile == trackInfo.file.absolutePath || currentFile == trackInfo.fileUri?.toString()),
                         onClick = {
-                            viewModel.playTrack(trackInfo)
+                            viewModel.playTrack(context, trackInfo)
                             onNavigateToPlayer()
                         },
                         onDelete = {

@@ -222,18 +222,23 @@ class PlaybackRepository @Inject constructor(
     /**
      * 导入歌单 (文件夹)
      * 如果已存在则返回已有的，否则新建
+     * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
      */
-    suspend fun importPlaylist(folderPath: String, trackCount: Int = 0): MusicPlaylist {
+    suspend fun importPlaylist(folderPath: String, trackCount: Int = 0, folderUri: String? = null): MusicPlaylist {
         val existing = musicPlaylistDao.getByFolderPath(folderPath)
         if (existing != null) {
-            // 更新歌曲数量
+            // 更新歌曲数量和URI
             musicPlaylistDao.updateTrackCount(existing.id, trackCount)
-            return existing.copy(trackCount = trackCount)
+            if (folderUri != null) {
+                musicPlaylistDao.updateFolderUri(existing.id, folderUri)
+            }
+            return existing.copy(trackCount = trackCount, folderUri = folderUri ?: existing.folderUri)
         }
 
         val folderName = File(folderPath).name
         val playlist = MusicPlaylist(
             folderPath = folderPath,
+            folderUri = folderUri,
             name = folderName,
             trackCount = trackCount,
             importedAt = System.currentTimeMillis()
@@ -269,6 +274,10 @@ class PlaybackRepository @Inject constructor(
     /** 更新歌单歌曲数量 */
     suspend fun updatePlaylistTrackCount(id: Long, count: Int) =
         musicPlaylistDao.updateTrackCount(id, count)
+
+    /** 更新歌单的 folderUri */
+    suspend fun updatePlaylistFolderUri(id: Long, folderUri: String?) =
+        musicPlaylistDao.updateFolderUri(id, folderUri)
 
     /** 删除歌单 */
     suspend fun deletePlaylist(id: Long) =

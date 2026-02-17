@@ -88,6 +88,8 @@ data class FolderScanResult(
  */
 data class TrackInfo(
     val file: File,
+    /** 文件 URI (用于 DocumentFile 方式访问的文件) */
+    val fileUri: android.net.Uri? = null,
     /** 歌曲标题 (元信息中的标题，若无则用文件名) */
     val title: String,
     /** 歌手/艺术家 */
@@ -395,6 +397,143 @@ class PlayerManager @Inject constructor(
     }
 
     /**
+     * 基于 URI 加载并播放 (支持隐藏文件夹)
+     * @param context 用于加载元信息
+     * @param uris 音频文件 URI 列表
+     * @param startUri 起始播放的 URI
+     * @param playlistFolderPath 歌单文件夹路径 (用于存储播放位置)
+     * @param playlistId 歌单 ID
+     */
+    fun loadUrisAndPlay(
+        context: Context,
+        uris: List<Uri>,
+        startUri: Uri,
+        playlistFolderPath: String,
+        playlistId: Long? = null
+    ) {
+        _currentFolderPath.value = playlistFolderPath
+        _currentPlaylistId.value = playlistId
+
+        val startIndex = uris.indexOfFirst { it == startUri }.coerceAtLeast(0)
+        _currentIndex.value = startIndex
+        _currentFilePath.value = startUri.toString()
+        // 从 URI 提取文件名
+        _currentDisplayName.value = startUri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "Unknown"
+
+        val mediaItems = uris.map { uri -> createMediaItemFromUri(context, uri) }
+
+        // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
+        ensureServiceStarted()
+
+        player.apply {
+            setMediaItems(mediaItems, startIndex, 0)
+            prepare()
+        }
+
+        // 加载当前歌曲元信息 (从 URI)
+        loadCurrentTrackMetadataFromUri(context, startUri)
+
+        // 恢复上次播放位置
+        scope.launch {
+            val memory = repository.getMemory(startUri.toString())
+            if (memory != null && memory.positionMs > 0) {
+                player.seekTo(startIndex, memory.positionMs)
+            }
+            player.play()
+
+            // 更新歌单的最近播放时间
+            playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+        }
+    }
+
+    /**
+     * 从 URI 创建 MediaItem
+     */
+    private fun createMediaItemFromUri(context: Context, uri: Uri): MediaItem {
+        val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "unknown"
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        val mimeType = getMimeTypeForExtension(ext)
+        
+        Log.d("PlayerManager", "createMediaItemFromUri: $fileName, ext=$ext, mime=$mimeType, uri=$uri")
+
+        val builder = MediaItem.Builder()
+            .setUri(uri)
+            .setMediaId(uri.toString())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(fileName.substringBeforeLast('.'))
+                    .build()
+            )
+
+        if (mimeType != null) {
+            builder.setMimeType(mimeType)
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * 根据扩展名获取 MIME 类型
+     */
+    private fun getMimeTypeForExtension(ext: String): String? {
+        return when (ext) {
+            "m4s" -> MimeTypes.VIDEO_MP4
+            "m4a" -> MimeTypes.VIDEO_MP4
+            "aac" -> MimeTypes.AUDIO_AAC
+            "mp3" -> MimeTypes.AUDIO_MPEG
+            "ogg" -> MimeTypes.AUDIO_OGG
+            "flac" -> MimeTypes.AUDIO_FLAC
+            "wav" -> MimeTypes.AUDIO_WAV
+            "opus" -> MimeTypes.AUDIO_OPUS
+            "wma" -> "audio/x-ms-wma"
+            "mp4" -> MimeTypes.VIDEO_MP4
+            "mkv" -> MimeTypes.VIDEO_MATROSKA
+            "webm" -> MimeTypes.VIDEO_WEBM
+            "ts" -> MimeTypes.VIDEO_MP2T
+            "3gp" -> MimeTypes.VIDEO_H263
+            "avi" -> MimeTypes.VIDEO_MP4
+            "mov" -> MimeTypes.VIDEO_MP4
+            else -> null
+        }
+    }
+
+    /**
+     * 从 URI 加载当前歌曲的元信息
+     */
+    private fun loadCurrentTrackMetadataFromUri(context: Context, uri: Uri) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(context, uri)
+
+                val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+                val coverBytes = retriever.embeddedPicture
+                val cover = coverBytes?.let {
+                    BitmapFactory.decodeByteArray(it, 0, it.size)
+                }
+                retriever.release()
+
+                withContext(Dispatchers.Main) {
+                    if (!title.isNullOrBlank()) {
+                        _currentDisplayName.value = title
+                    }
+                    _currentArtist.value = artist
+                    _currentAlbum.value = album
+                    _currentCover.value = cover
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _currentCover.value = null
+                    _currentArtist.value = null
+                    _currentAlbum.value = null
+                }
+            }
+        }
+    }
+
+    /**
      * 播放指定索引
      */
     fun playAt(index: Int) {
@@ -653,6 +792,89 @@ class PlayerManager @Inject constructor(
         val files = scanAudioFiles(folderPath)
 
         files.map { file -> loadTrackInfo(file) }
+    }
+
+    /**
+     * 基于 DocumentFile 的加载 (适用于 Android 11+ SAF 授权的文件夹)
+     * 返回带有 fileUri 的 TrackInfo 列表
+     */
+    suspend fun loadFolderTrackInfos(context: Context, folderUri: Uri): List<TrackInfo> = withContext(Dispatchers.IO) {
+        val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+        if (treeDoc == null) {
+            android.util.Log.e("PlayerManager", "无法从URI创建DocumentFile: $folderUri")
+            return@withContext emptyList()
+        }
+        
+        val uriList = mutableListOf<Uri>()
+        scanDocumentFileUrisRecursive(treeDoc, uriList)
+        
+        uriList.map { uri -> loadTrackInfoFromUri(context, uri) }
+    }
+
+    /**
+     * 递归扫描 DocumentFile 目录，收集所有音频文件的 URI
+     */
+    private fun scanDocumentFileUrisRecursive(dir: androidx.documentfile.provider.DocumentFile, result: MutableList<Uri>) {
+        val children = dir.listFiles()
+        for (child in children) {
+            if (child.isDirectory) {
+                scanDocumentFileUrisRecursive(child, result)
+            } else if (child.isFile) {
+                val name = child.name ?: continue
+                val ext = name.substringAfterLast('.', "").lowercase()
+                if (ext in mediaExtensions) {
+                    result.add(child.uri)
+                }
+            }
+        }
+    }
+
+    /**
+     * 从 URI 加载单个文件的元信息
+     */
+    private suspend fun loadTrackInfoFromUri(context: Context, uri: Uri): TrackInfo = withContext(Dispatchers.IO) {
+        try {
+            // 从 URI 获取文件名
+            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "unknown"
+            val nameWithoutExt = fileName.substringBeforeLast('.')
+            
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(context, uri)
+
+            val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                ?: nameWithoutExt
+            val artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            val album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
+            val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            val durationMs = durationStr?.toLongOrNull() ?: 0L
+            val coverBytes = retriever.embeddedPicture
+            val cover = coverBytes?.let {
+                BitmapFactory.decodeByteArray(it, 0, it.size)
+            }
+            retriever.release()
+
+            // 创建一个占位 File 对象（用于兼容现有逻辑）
+            val placeholderFile = File(uri.toString())
+            
+            TrackInfo(
+                file = placeholderFile,
+                fileUri = uri,
+                title = title,
+                artist = artist,
+                album = album,
+                durationMs = durationMs,
+                coverBitmap = cover
+            )
+        } catch (e: Exception) {
+            // 创建一个占位 File 对象
+            val placeholderFile = File(uri.toString())
+            TrackInfo(
+                file = placeholderFile,
+                fileUri = uri,
+                title = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "unknown",
+                durationMs = 0
+            )
+        }
     }
 
     /**

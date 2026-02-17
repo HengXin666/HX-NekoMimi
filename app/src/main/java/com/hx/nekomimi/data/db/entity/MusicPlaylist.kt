@@ -17,6 +17,8 @@ data class MusicPlaylist(
     val id: Long = 0,
     /** 文件夹绝对路径 */
     val folderPath: String,
+    /** 文件夹 URI (Android 11+ SAF 授权的 URI，用于访问隐藏文件夹) */
+    val folderUri: String? = null,
     /** 歌单名称 (默认为文件夹名，用户可编辑) */
     val name: String,
     /** 歌曲数量 (导入/刷新时统计) */
