@@ -17,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -36,7 +35,6 @@ import com.hx.nekomimi.subtitle.model.AssStyle
 import com.hx.nekomimi.subtitle.model.KaraokeSyllable
 import com.hx.nekomimi.subtitle.model.KaraokeType
 import com.hx.nekomimi.subtitle.model.SubtitleCue
-import androidx.compose.ui.graphics.Paint.Companion.asFrameworkPaint
 import android.graphics.Paint as AndroidPaint
 
 /**
@@ -232,25 +230,25 @@ private fun KaraokeFillText(
     ) {
         // 绘制填充部分
         drawIntoCanvas { canvas ->
-            val frameworkPaint = textPaint.asFrameworkPaint()
+            val nativeCanvas = canvas.nativeCanvas
             
             // 保存画布状态
-            canvas.save()
+            nativeCanvas.save()
             
             // 裁剪区域 - 只显示填充进度部分
-            canvas.clipRect(
-                left = 0f,
-                top = 0f,
-                right = fillWidth,
-                bottom = size.height
+            nativeCanvas.clipRect(
+                0f,
+                0f,
+                fillWidth,
+                size.height
             )
             
             // 设置填充颜色
-            frameworkPaint.color = fillColor.hashCode()
-            frameworkPaint.style = AndroidPaint.Style.FILL
+            textPaint.color = fillColor.hashCode()
+            textPaint.style = AndroidPaint.Style.FILL
             
             // 绘制文本
-            canvas.nativeCanvas.drawText(
+            nativeCanvas.drawText(
                 text,
                 0f,
                 size.height / 2 + textPaint.textSize / 3,
@@ -258,7 +256,7 @@ private fun KaraokeFillText(
             )
             
             // 恢复画布
-            canvas.restore()
+            nativeCanvas.restore()
         }
     }
 }

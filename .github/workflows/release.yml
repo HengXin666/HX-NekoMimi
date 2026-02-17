@@ -59,20 +59,27 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            # 使用时间戳格式: nightly-20260217-1814 (年月日-时分)
             TIMESTAMP=$(TZ='Asia/Shanghai' date +%Y%m%d-%H%M)
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             echo "tag_name=nightly-${TIMESTAMP}" >> $GITHUB_OUTPUT
-            echo "release_notes=自动构建版本
-
-📅 构建时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')
-🔗 Commit: ${{ github.sha }}
-
----
-非正式发行版本" >> $GITHUB_OUTPUT
+            {
+              echo "release_notes<<NOTES_EOF"
+              echo "自动构建版本"
+              echo ""
+              echo "📅 构建时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+              echo "🔗 Commit: ${{ github.sha }}"
+              echo ""
+              echo "---"
+              echo "非正式发行版本"
+              echo "NOTES_EOF"
+            } >> $GITHUB_OUTPUT
           else
             echo "tag_name=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
-            echo "release_notes=${{ github.event.inputs.release_notes }}" >> $GITHUB_OUTPUT
+            {
+              echo "release_notes<<NOTES_EOF"
+              echo "${{ github.event.inputs.release_notes }}"
+              echo "NOTES_EOF"
+            } >> $GITHUB_OUTPUT
           fi
 
       - name: 重命名 APK
