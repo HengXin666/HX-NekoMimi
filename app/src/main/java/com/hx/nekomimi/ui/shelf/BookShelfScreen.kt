@@ -90,7 +90,7 @@ class BookShelfViewModel @Inject constructor(
     }
 
     /** 导入一本书 (文件夹) - 先扫描显示结果，再保存 */
-    fun importBook(folderPath: String) {
+    fun importBook(folderPath: String, folderUri: Uri? = null) {
         viewModelScope.launch {
             _isScanning.value = true
             val result = withContext(Dispatchers.IO) {
@@ -100,7 +100,7 @@ class BookShelfViewModel @Inject constructor(
             _isScanning.value = false
 
             // 保存到数据库
-            val book = repository.importBook(folderPath)
+            val book = repository.importBook(folderPath, folderUri?.toString())
             toastMessage.value = "已导入: ${book.title} (${result.doneCount} 个音频)"
         }
     }
@@ -160,7 +160,7 @@ fun BookShelfScreen(
         uri?.let {
             val path = getPathFromUri(context, it)
             if (path != null) {
-                viewModel.importBook(path)
+                viewModel.importBook(path, it)
             }
         }
     }

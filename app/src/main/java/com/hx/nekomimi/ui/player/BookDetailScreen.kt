@@ -12,6 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +56,9 @@ class BookDetailViewModel @Inject constructor(
     /** 当前书的信息 */
     val book = MutableStateFlow<Book?>(null)
 
+    /** 书的 folderUri (SAF 授权的 URI) */
+    val folderUri = MutableStateFlow<android.net.Uri?>(null)
+
     /** 当前浏览的文件夹路径 */
     val currentBrowsePath = MutableStateFlow<String?>(null)
 
@@ -85,12 +89,18 @@ class BookDetailViewModel @Inject constructor(
     fun dismissScanResult() { _scanResult.value = null }
 
     /** 刷新当前文件夹: 重新递归扫描并显示扫描结果弹窗 */
-    fun refreshCurrentFolder() {
+    fun refreshCurrentFolder(context: android.content.Context) {
         val path = rootFolderPath.value ?: return
+        val uri = folderUri.value
         viewModelScope.launch {
             _isScanning.value = true
             val result = withContext(Dispatchers.IO) {
-                playerManager.scanFolderWithResult(path)
+                // 优先使用 URI 方式扫描 (支持隐藏文件夹)
+                if (uri != null) {
+                    playerManager.scanFolderWithResult(context, uri)
+                } else {
+                    playerManager.scanFolderWithResult(path)
+                }
             }
             _scanResult.value = result
             _isScanning.value = false
@@ -131,6 +141,8 @@ class BookDetailViewModel @Inject constructor(
             val existingBook = repository.getBook(folderPath)
                 ?: repository.importBook(folderPath)
             book.value = existingBook
+            // 加载 folderUri
+            folderUri.value = existingBook.folderUri?.let { android.net.Uri.parse(it) }
             editTitle.value = existingBook.title
             editDescription.value = existingBook.description
 
@@ -406,7 +418,8 @@ fun BookDetailScreen(
                         }
                     }
                     // 刷新按钮
-                    IconButton(onClick = { viewModel.refreshCurrentFolder() }) {
+                    val context = LocalContext.current
+                    IconButton(onClick = { viewModel.refreshCurrentFolder(context) }) {
                         Icon(
                             Icons.Filled.Refresh,
                             contentDescription = "刷新扫描",

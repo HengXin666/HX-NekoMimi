@@ -17,6 +17,8 @@ data class Book(
     val id: Long = 0,
     /** 书的根文件夹绝对路径 */
     val folderPath: String,
+    /** SAF 授权的 URI (用于访问隐藏文件夹) */
+    val folderUri: String? = null,
     /** 书名 (默认为文件夹名，用户可编辑) */
     val title: String,
     /** 书的描述 (用户可编辑) */

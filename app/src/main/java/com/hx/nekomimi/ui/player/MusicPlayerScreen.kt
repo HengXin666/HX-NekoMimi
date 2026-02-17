@@ -621,25 +621,38 @@ fun AssStyledText(
 
     val displayFontSize = if (isCurrent) (fontSize * 1.2f) else fontSize
 
-    Text(
-        text = cue.text,
-        style = TextStyle(
-            fontSize = displayFontSize.sp,
-            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-            fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
-            color = finalColor,
-            textAlign = TextAlign.Center,
-            lineHeight = (displayFontSize * 1.4f).sp,
-            shadow = if (shadowDepth > 0 || outlineSize > 0) {
-                Shadow(
-                    color = outlineColor.copy(alpha = alpha),
-                    offset = Offset(shadowDepth, shadowDepth),
-                    blurRadius = outlineSize * 2
+    // 分割多行文本，每行独立渲染
+    val lines = cue.text.split("\n")
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        lines.forEachIndexed { index, line ->
+            Text(
+                text = line,
+                style = TextStyle(
+                    fontSize = displayFontSize.sp,
+                    fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
+                    color = finalColor,
+                    textAlign = TextAlign.Center,
+                    lineHeight = (displayFontSize * 1.4f).sp,
+                    shadow = if (shadowDepth > 0 || outlineSize > 0) {
+                        Shadow(
+                            color = outlineColor.copy(alpha = alpha),
+                            offset = Offset(shadowDepth, shadowDepth),
+                            blurRadius = outlineSize * 2
+                        )
+                    } else null
                 )
-            } else null
-        ),
-        modifier = Modifier.fillMaxWidth()
-    )
+            )
+            // 行间距
+            if (index < lines.size - 1 && lines.size > 1) {
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
+    }
 }
 
 /**

@@ -80,4 +80,8 @@ interface BookDao {
     /** 按 ID 删除书 */
     @Query("DELETE FROM book WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /** 更新书的 folderUri */
+    @Query("UPDATE book SET folderUri = :folderUri WHERE id = :id")
+    suspend fun updateFolderUri(id: Long, folderUri: String?)
 }

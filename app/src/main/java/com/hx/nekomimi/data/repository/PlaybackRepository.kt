@@ -165,14 +165,22 @@ class PlaybackRepository @Inject constructor(
     /**
      * 导入一本书 (根文件夹)
      * 如果已存在则忽略，返回已有或新建的 Book
+     * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
      */
-    suspend fun importBook(folderPath: String): Book {
+    suspend fun importBook(folderPath: String, folderUri: String? = null): Book {
         val existing = bookDao.getByFolderPath(folderPath)
-        if (existing != null) return existing
+        if (existing != null) {
+            // 更新 URI
+            if (folderUri != null) {
+                bookDao.updateFolderUri(existing.id, folderUri)
+            }
+            return existing.copy(folderUri = folderUri ?: existing.folderUri)
+        }
 
         val folderName = File(folderPath).name
         val book = Book(
             folderPath = folderPath,
+            folderUri = folderUri,
             title = folderName,
             importedAt = System.currentTimeMillis(),
             lastUpdatedAt = System.currentTimeMillis()
