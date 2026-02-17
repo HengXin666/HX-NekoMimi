@@ -125,8 +125,9 @@ setup_env() {
     mkdir -p "$PREFIX"
 
     export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig"
-    export CFLAGS="-O2 -fPIC"
-    export CXXFLAGS="-O2 -fPIC"
+    export PKG_CONFIG_SYSROOT_DIR=""
+    export CFLAGS="-O2 -fPIC -I${PREFIX}/include -I${PREFIX}/include/freetype2"
+    export CXXFLAGS="-O2 -fPIC -I${PREFIX}/include -I${PREFIX}/include/freetype2"
     export LDFLAGS="-L${PREFIX}/lib"
 }
 
@@ -154,7 +155,6 @@ ranlib = '${TOOLCHAIN}/bin/llvm-ranlib'
 pkgconfig = 'pkg-config'
 
 [properties]
-sys_root = '${TOOLCHAIN}/sysroot'
 pkg_config_libdir = '${PREFIX_BASE}/${ABI}/lib/pkgconfig'
 
 [host_machine]
@@ -164,8 +164,8 @@ cpu = '${CPU_FAMILY}'
 endian = 'little'
 
 [built-in options]
-c_args = ['-O2', '-fPIC']
-cpp_args = ['-O2', '-fPIC']
+c_args = ['-O2', '-fPIC', '-I${PREFIX_BASE}/${ABI}/include', '-I${PREFIX_BASE}/${ABI}/include/freetype2']
+cpp_args = ['-O2', '-fPIC', '-I${PREFIX_BASE}/${ABI}/include', '-I${PREFIX_BASE}/${ABI}/include/freetype2']
 c_link_args = ['-L${PREFIX_BASE}/${ABI}/lib']
 cpp_link_args = ['-L${PREFIX_BASE}/${ABI}/lib']
 default_library = 'static'
