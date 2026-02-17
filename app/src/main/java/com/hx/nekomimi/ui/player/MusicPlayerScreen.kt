@@ -64,7 +64,15 @@ class MusicPlayerViewModel @Inject constructor(
         // 监听当前文件变化，自动加载字幕
         viewModelScope.launch {
             playerManager.currentFilePath.filterNotNull().distinctUntilChanged().collect { path ->
-                val result = SubtitleManager.loadForAudio(path)
+                val folderUri = playerManager.currentFolderUri.value
+                val result = if (folderUri != null) {
+                    // 使用 URI 方式加载 (支持隐藏文件夹)
+                    val fileName = playerManager.currentDisplayName.value ?: return@collect
+                    SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
+                } else {
+                    // 使用文件路径方式加载
+                    SubtitleManager.loadForAudio(path)
+                }
                 subtitleResult.value = result
                 when (result) {
                     is SubtitleManager.SubtitleResult.Ass -> {

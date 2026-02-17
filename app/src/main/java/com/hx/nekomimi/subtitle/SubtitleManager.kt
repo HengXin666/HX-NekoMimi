@@ -1,8 +1,12 @@
 package com.hx.nekomimi.subtitle
 
+import android.content.Context
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import com.hx.nekomimi.subtitle.model.AssStyle
 import com.hx.nekomimi.subtitle.model.SubtitleCue
 import java.io.File
+import java.io.InputStreamReader
 
 /**
  * 字幕管理器
@@ -61,6 +65,54 @@ object SubtitleManager {
         }
 
         return SubtitleResult.None
+    }
+
+    /**
+     * 通过 URI 方式加载字幕 (支持隐藏文件夹)
+     * 查找策略: 同目录下同名文件，优先 ASS > SRT
+     *
+     * @param context 上下文
+     * @param folderUri 文件夹的 SAF URI
+     * @param audioFileName 音频文件名 (不含路径)
+     * @return 字幕加载结果
+     */
+    fun loadForAudioFromUri(context: Context, folderUri: Uri, audioFileName: String): SubtitleResult {
+        val baseName = audioFileName.substringBeforeLast('.')
+        val treeDoc = DocumentFile.fromTreeUri(context, folderUri) ?: return SubtitleResult.None
+
+        // 在文件夹中查找字幕文件
+        for (ext in subtitleExtensions) {
+            val subtitleName = "$baseName.$ext"
+            val subtitleDoc = treeDoc.findFile(subtitleName)
+            if (subtitleDoc != null && subtitleDoc.isFile) {
+                return when (ext) {
+                    "ass", "ssa" -> {
+                        val content = readUriContent(context, subtitleDoc.uri)
+                        val doc = AssParser.parse(content)
+                        SubtitleResult.Ass(doc, doc.cues, doc.styles)
+                    }
+                    "srt" -> {
+                        val content = readUriContent(context, subtitleDoc.uri)
+                        val cues = SrtParser.parse(content)
+                        SubtitleResult.Srt(cues)
+                    }
+                    else -> SubtitleResult.None
+                }
+            }
+        }
+
+        return SubtitleResult.None
+    }
+
+    /**
+     * 从 URI 读取文件内容
+     */
+    private fun readUriContent(context: Context, uri: Uri): String {
+        return context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            InputStreamReader(inputStream, "UTF-8").use { reader ->
+                reader.readText()
+            }
+        } ?: ""
     }
 
     /**

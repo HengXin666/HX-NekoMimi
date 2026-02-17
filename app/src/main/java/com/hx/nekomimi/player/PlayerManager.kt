@@ -131,6 +131,10 @@ class PlayerManager @Inject constructor(
     private val _currentFolderPath = MutableStateFlow<String?>(null)
     val currentFolderPath: StateFlow<String?> = _currentFolderPath.asStateFlow()
 
+    /** 当前播放文件夹的 SAF URI (用于访问隐藏文件夹) */
+    private val _currentFolderUri = MutableStateFlow<android.net.Uri?>(null)
+    val currentFolderUri: StateFlow<android.net.Uri?> = _currentFolderUri.asStateFlow()
+
     /** 当前文件显示名称 */
     private val _currentDisplayName = MutableStateFlow<String?>(null)
     val currentDisplayName: StateFlow<String?> = _currentDisplayName.asStateFlow()
@@ -318,12 +322,14 @@ class PlayerManager @Inject constructor(
 
     /**
      * 加载文件夹并播放指定文件 (递归扫描子文件夹)
+     * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
      */
-    fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null) {
+    fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null) {
         val files = scanAudioFiles(folderPath)  // 递归扫描
 
         _playlist.value = files
         _currentFolderPath.value = folderPath
+        _currentFolderUri.value = folderUri
         _currentPlaylistId.value = playlistId
 
         val startIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
@@ -359,10 +365,12 @@ class PlayerManager @Inject constructor(
 
     /**
      * 加载文件列表并播放指定文件 (歌单模式，文件可来自不同文件夹)
+     * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
      */
-    fun loadFilesAndPlay(files: List<File>, filePath: String, playlistFolderPath: String, playlistId: Long? = null) {
+    fun loadFilesAndPlay(files: List<File>, filePath: String, playlistFolderPath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null) {
         _playlist.value = files
         _currentFolderPath.value = playlistFolderPath
+        _currentFolderUri.value = folderUri
         _currentPlaylistId.value = playlistId
 
         val startIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
@@ -403,15 +411,18 @@ class PlayerManager @Inject constructor(
      * @param startUri 起始播放的 URI
      * @param playlistFolderPath 歌单文件夹路径 (用于存储播放位置)
      * @param playlistId 歌单 ID
+     * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
      */
     fun loadUrisAndPlay(
         context: Context,
         uris: List<Uri>,
         startUri: Uri,
         playlistFolderPath: String,
-        playlistId: Long? = null
+        playlistId: Long? = null,
+        folderUri: android.net.Uri? = null
     ) {
         _currentFolderPath.value = playlistFolderPath
+        _currentFolderUri.value = folderUri
         _currentPlaylistId.value = playlistId
 
         val startIndex = uris.indexOfFirst { it == startUri }.coerceAtLeast(0)

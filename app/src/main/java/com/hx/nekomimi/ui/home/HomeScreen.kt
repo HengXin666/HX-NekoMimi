@@ -163,7 +163,8 @@ class MusicHomeViewModel @Inject constructor(
                 uris = uris,
                 startUri = startUri,
                 playlistFolderPath = playlist.folderPath,
-                playlistId = playlist.id
+                playlistId = playlist.id,
+                folderUri = android.net.Uri.parse(playlist.folderUri)
             )
         } else {
             // 使用文件路径方式播放
@@ -172,7 +173,8 @@ class MusicHomeViewModel @Inject constructor(
                 files = files,
                 filePath = trackInfo.file.absolutePath,
                 playlistFolderPath = playlist.folderPath,
-                playlistId = playlist.id
+                playlistId = playlist.id,
+                folderUri = playlist.folderUri?.let { android.net.Uri.parse(it) }
             )
         }
     }

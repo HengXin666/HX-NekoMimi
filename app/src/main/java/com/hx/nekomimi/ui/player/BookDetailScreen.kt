@@ -213,7 +213,7 @@ class BookDetailViewModel @Inject constructor(
     fun playFile(file: File) {
         val browsePath = currentBrowsePath.value ?: return
         playerManager.setAudioBookMode(true)
-        playerManager.loadFolderAndPlay(browsePath, file.absolutePath)
+        playerManager.loadFolderAndPlay(browsePath, file.absolutePath, folderUri = folderUri.value)
 
         // 更新书的最近播放信息
         val root = rootFolderPath.value ?: return
@@ -242,7 +242,7 @@ class BookDetailViewModel @Inject constructor(
 
         val folder = file.parentFile?.absolutePath ?: return
         playerManager.setAudioBookMode(true)
-        playerManager.loadFolderAndPlay(folder, filePath)
+        playerManager.loadFolderAndPlay(folder, filePath, folderUri = folderUri.value)
     }
 
     /**
