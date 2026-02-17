@@ -595,6 +595,12 @@ fun AssLyricsView(
 /**
  * libass 原生渲染视图
  * 将 ASS 字幕通过 libass 渲染为 Bitmap 并显示
+ *
+ * 安全性:
+ * - AssRenderer 使用内部同步锁保护 JNI 调用
+ * - 渲染产生的 Bitmap 会被复制一份给 Compose 显示，原始 Bitmap 立即回收
+ * - 横竖屏切换时自动更新帧尺寸并重新渲染
+ * - 所有 JNI 调用均有 try-catch 保护，避免闪退
  */
 @Composable
 fun LibassLyricsView(
@@ -613,70 +619,122 @@ fun LibassLyricsView(
         else (screenWidthPx * 3 / 4) // 默认 4:3
     }
 
-    // 创建和管理 AssRenderer 实例
-    val renderer = remember { AssRenderer() }
-    var isReady by remember { mutableStateOf(false) }
+    // 使用 key 让 renderer 在 assContent 变化时重新创建，避免使用已销毁的旧实例
+    key(assContent) {
+        // 在 rememberUpdatedState 中跟踪最新的帧尺寸 (横竖屏切换时会变化)
+        val currentScreenWidthPx by rememberUpdatedState(screenWidthPx)
+        val currentRenderHeight by rememberUpdatedState(renderHeight)
 
-    // 初始化 renderer 和加载 track
-    LaunchedEffect(assContent) {
-        withContext(Dispatchers.IO) {
-            try {
-                renderer.destroy() // 清理旧资源
-                if (renderer.init()) {
-                    renderer.setFrameSize(screenWidthPx, renderHeight)
-                    isReady = renderer.loadTrack(assContent)
-                    if (isReady) {
-                        Log.i("AssLyricsView", "libass 初始化成功: ${screenWidthPx}x${renderHeight}")
+        // 创建和管理 AssRenderer 实例
+        val rendererHolder = remember {
+            object {
+                val renderer = AssRenderer()
+                @Volatile var ready = false
+                // 记录当前设置的帧尺寸，用于检测是否需要更新
+                var currentW = 0
+                var currentH = 0
+            }
+        }
+
+        var isReady by remember { mutableStateOf(false) }
+
+        // 初始化 renderer 和加载 track
+        LaunchedEffect(Unit) {
+            withContext(Dispatchers.IO) {
+                try {
+                    if (rendererHolder.renderer.init()) {
+                        rendererHolder.renderer.setFrameSize(currentScreenWidthPx, currentRenderHeight)
+                        rendererHolder.currentW = currentScreenWidthPx
+                        rendererHolder.currentH = currentRenderHeight
+                        val loaded = rendererHolder.renderer.loadTrack(assContent)
+                        rendererHolder.ready = loaded
+                        isReady = loaded
+                        if (loaded) {
+                            Log.i("AssLyricsView", "libass 初始化成功: ${currentScreenWidthPx}x${currentRenderHeight}")
+                        } else {
+                            Log.e("AssLyricsView", "libass loadTrack 失败")
+                        }
+                    } else {
+                        Log.e("AssLyricsView", "libass init 失败")
+                    }
+                } catch (e: Exception) {
+                    Log.e("AssLyricsView", "libass 初始化异常", e)
+                    isReady = false
+                }
+            }
+        }
+
+        // 横竖屏切换时更新帧尺寸
+        LaunchedEffect(screenWidthPx, renderHeight) {
+            if (!isReady) return@LaunchedEffect
+            if (screenWidthPx != rendererHolder.currentW || renderHeight != rendererHolder.currentH) {
+                withContext(Dispatchers.IO) {
+                    try {
+                        rendererHolder.renderer.setFrameSize(screenWidthPx, renderHeight)
+                        rendererHolder.currentW = screenWidthPx
+                        rendererHolder.currentH = renderHeight
+                        Log.i("AssLyricsView", "帧尺寸已更新: ${screenWidthPx}x${renderHeight}")
+                    } catch (e: Exception) {
+                        Log.e("AssLyricsView", "更新帧尺寸失败", e)
                     }
                 }
-            } catch (e: Exception) {
-                Log.e("AssLyricsView", "libass 初始化失败", e)
-                isReady = false
             }
         }
-    }
 
-    // 生命周期清理
-    DisposableEffect(Unit) {
-        onDispose {
-            renderer.destroy()
-        }
-    }
-
-    // 渲染当前帧
-    val currentBitmap = remember { mutableStateOf<Bitmap?>(null) }
-    val currentRect = remember { mutableStateOf<IntArray?>(null) }
-
-    LaunchedEffect(positionMs, isReady) {
-        if (!isReady) return@LaunchedEffect
-        withContext(Dispatchers.Default) {
-            try {
-                val result = renderer.renderFrame(positionMs)
-                currentBitmap.value = result?.bitmap
-                currentRect.value = if (result != null) {
-                    intArrayOf(result.left, result.top, result.right, result.bottom)
-                } else null
-            } catch (e: Exception) {
-                Log.e("AssLyricsView", "渲染帧失败", e)
+        // 生命周期清理
+        DisposableEffect(Unit) {
+            onDispose {
+                rendererHolder.ready = false
+                rendererHolder.renderer.destroy()
             }
         }
-    }
 
-    // 显示渲染结果
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        val bitmap = currentBitmap.value
-        if (bitmap != null && !bitmap.isRecycled) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "ASS 字幕",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight(),
-                contentScale = ContentScale.FillWidth
-            )
+        // 渲染当前帧 (Bitmap 安全复制)
+        var displayBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+        LaunchedEffect(positionMs, isReady, screenWidthPx, renderHeight) {
+            if (!isReady || !rendererHolder.ready) return@LaunchedEffect
+            withContext(Dispatchers.Default) {
+                try {
+                    val result = rendererHolder.renderer.renderFrame(positionMs)
+                    if (result != null && !result.bitmap.isRecycled) {
+                        // 复制一份 Bitmap 给 Compose 显示，原始的可以被后续渲染覆盖
+                        val copied = result.bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                        val oldBitmap = displayBitmap
+                        displayBitmap = copied
+                        // 回收旧的显示 Bitmap
+                        if (oldBitmap != null && !oldBitmap.isRecycled) {
+                            oldBitmap.recycle()
+                        }
+                    } else {
+                        val oldBitmap = displayBitmap
+                        displayBitmap = null
+                        if (oldBitmap != null && !oldBitmap.isRecycled) {
+                            oldBitmap.recycle()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("AssLyricsView", "渲染帧失败", e)
+                }
+            }
+        }
+
+        // 显示渲染结果
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            val bitmap = displayBitmap
+            if (bitmap != null && !bitmap.isRecycled) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "ASS 字幕",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight(),
+                    contentScale = ContentScale.FillWidth
+                )
+            }
         }
     }
 }

@@ -182,7 +182,12 @@ class BookPlayerViewModel @Inject constructor(
         if (memory.filePath == playerManager.currentFilePath.value) {
             playerManager.seekTo(memory.positionMs)
         } else {
-            playerManager.loadFolderAndPlay(memory.folderPath, memory.filePath)
+            // 传递当前的 folderUri，确保 SAF 模式下也能正常播放
+            playerManager.loadFolderAndPlay(
+                memory.folderPath,
+                memory.filePath,
+                folderUri = playerManager.currentFolderUri.value
+            )
         }
     }
 

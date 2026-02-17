@@ -322,10 +322,46 @@ class PlayerManager @Inject constructor(
 
     /**
      * 加载文件夹并播放指定文件 (递归扫描子文件夹)
+     * 当有 folderUri 时，优先使用 SAF DocumentFile 扫描 (支持隐藏文件夹和分区存储)
      * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
      */
     fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null) {
-        val files = scanAudioFiles(folderPath)  // 递归扫描
+        // 优先尝试 SAF 方式 (支持隐藏文件夹、分区存储)
+        if (folderUri != null) {
+            val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+            if (treeDoc != null && treeDoc.exists()) {
+                val uriList = mutableListOf<Uri>()
+                scanDocumentFileUrisRecursive(treeDoc, uriList)
+                if (uriList.isNotEmpty()) {
+                    Log.d("PlayerManager", "loadFolderAndPlay: SAF 模式, 扫描到 ${uriList.size} 个文件")
+                    // 从 filePath 中提取文件名来匹配 URI
+                    val targetFileName = File(filePath).name
+                    val startUri = uriList.firstOrNull { uri ->
+                        val uriName = uri.lastPathSegment?.substringAfterLast('/') ?: ""
+                        uriName == targetFileName
+                    } ?: uriList.first()
+
+                    loadUrisAndPlay(
+                        context = context,
+                        uris = uriList,
+                        startUri = startUri,
+                        playlistFolderPath = folderPath,
+                        playlistId = playlistId,
+                        folderUri = folderUri
+                    )
+                    return
+                }
+                Log.w("PlayerManager", "loadFolderAndPlay: SAF 扫描到 0 个文件, 降级到 File API")
+            }
+        }
+
+        // 降级: 使用 File API 扫描
+        val files = scanAudioFiles(folderPath)
+
+        if (files.isEmpty()) {
+            Log.w("PlayerManager", "loadFolderAndPlay: File API 也扫描到 0 个文件, folderPath=$folderPath")
+            return
+        }
 
         _playlist.value = files
         _currentFolderPath.value = folderPath

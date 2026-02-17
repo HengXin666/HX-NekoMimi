@@ -362,6 +362,18 @@ class BookDetailViewModel @Inject constructor(
     fun resumeFromMemory() {
         val bookVal = book.value ?: return
         val filePath = bookVal.lastPlayedFilePath ?: return
+        val uri = folderUri.value
+
+        // SAF 模式: 不做 File.exists() 检查（分区存储下 File API 可能无法访问）
+        if (uri != null) {
+            // 使用 loadFolderAndPlay（已支持 SAF 降级扫描）
+            val rootPath = rootFolderPath.value ?: return
+            playerManager.setAudioBookMode(true)
+            playerManager.loadFolderAndPlay(rootPath, filePath, folderUri = uri)
+            return
+        }
+
+        // File API 模式
         val file = File(filePath)
         if (!file.exists()) {
             toastMessage.value = "文件不存在"
@@ -370,7 +382,7 @@ class BookDetailViewModel @Inject constructor(
 
         val folder = file.parentFile?.absolutePath ?: return
         playerManager.setAudioBookMode(true)
-        playerManager.loadFolderAndPlay(folder, filePath, folderUri = folderUri.value)
+        playerManager.loadFolderAndPlay(folder, filePath, folderUri = null)
     }
 
     /**

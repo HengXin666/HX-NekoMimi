@@ -42,7 +42,12 @@ class BookmarkViewModel @Inject constructor(
         if (currentFile == bookmark.filePath) {
             playerManager.seekTo(bookmark.positionMs)
         } else {
-            playerManager.loadFolderAndPlay(bookmark.folderPath, bookmark.filePath)
+            // 传递当前的 folderUri，确保 SAF 模式下也能正常播放
+            playerManager.loadFolderAndPlay(
+                bookmark.folderPath,
+                bookmark.filePath,
+                folderUri = playerManager.currentFolderUri.value
+            )
         }
     }
 

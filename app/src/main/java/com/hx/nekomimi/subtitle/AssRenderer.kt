@@ -49,6 +49,9 @@ class AssRenderer : Closeable {
         }
     }
 
+    /** 同步锁，保护所有 JNI 调用的线程安全 */
+    private val lock = Object()
+
     /** 原生指针 */
     private var nativePtr: Long = 0
 
@@ -59,9 +62,9 @@ class AssRenderer : Closeable {
     /** 是否已加载 track */
     private var trackLoaded: Boolean = false
 
-    /** 上一帧渲染结果缓存 (用于 change 检测优化) */
-    private var lastBitmap: Bitmap? = null
-    private var lastTimeMs: Long = -1
+    /** 是否已被销毁 */
+    @Volatile
+    private var destroyed: Boolean = false
 
     /** 渲染结果 */
     data class RenderResult(
@@ -87,17 +90,20 @@ class AssRenderer : Closeable {
      * @return 是否初始化成功
      */
     fun init(): Boolean {
-        if (nativePtr != 0L) {
-            Log.w(TAG, "重复初始化, 先释放旧资源")
-            destroy()
+        synchronized(lock) {
+            if (destroyed) return false
+            if (nativePtr != 0L) {
+                Log.w(TAG, "重复初始化, 先释放旧资源")
+                destroyInternal()
+            }
+            nativePtr = nativeInit()
+            if (nativePtr == 0L) {
+                Log.e(TAG, "nativeInit 返回空指针")
+                return false
+            }
+            Log.i(TAG, "初始化成功")
+            return true
         }
-        nativePtr = nativeInit()
-        if (nativePtr == 0L) {
-            Log.e(TAG, "nativeInit 返回空指针")
-            return false
-        }
-        Log.i(TAG, "初始化成功")
-        return true
     }
 
     /**
@@ -108,10 +114,12 @@ class AssRenderer : Closeable {
      * libass 会根据此尺寸自动缩放坐标。
      */
     fun setFrameSize(width: Int, height: Int) {
-        if (nativePtr == 0L) return
-        frameWidth = width
-        frameHeight = height
-        nativeSetFrameSize(nativePtr, width, height)
+        synchronized(lock) {
+            if (nativePtr == 0L || destroyed) return
+            frameWidth = width
+            frameHeight = height
+            nativeSetFrameSize(nativePtr, width, height)
+        }
     }
 
     /**
@@ -120,14 +128,14 @@ class AssRenderer : Closeable {
      * @return 是否加载成功
      */
     fun loadTrack(assContent: String): Boolean {
-        if (nativePtr == 0L) {
-            Log.e(TAG, "尚未初始化")
-            return false
+        synchronized(lock) {
+            if (nativePtr == 0L || destroyed) {
+                Log.e(TAG, "尚未初始化或已销毁")
+                return false
+            }
+            trackLoaded = nativeLoadTrack(nativePtr, assContent)
+            return trackLoaded
         }
-        trackLoaded = nativeLoadTrack(nativePtr, assContent)
-        lastBitmap = null
-        lastTimeMs = -1
-        return trackLoaded
     }
 
     /**
@@ -136,8 +144,10 @@ class AssRenderer : Closeable {
      * @param fontPath 字体文件路径
      */
     fun addFont(fontName: String?, fontPath: String) {
-        if (nativePtr == 0L) return
-        nativeAddFont(nativePtr, fontName, fontPath)
+        synchronized(lock) {
+            if (nativePtr == 0L || destroyed) return
+            nativeAddFont(nativePtr, fontName, fontPath)
+        }
     }
 
     /**
@@ -147,36 +157,52 @@ class AssRenderer : Closeable {
      * @return 渲染结果，如果该时间点没有字幕则返回 null
      */
     fun renderFrame(timeMs: Long): RenderResult? {
-        if (nativePtr == 0L || !trackLoaded) return null
-        if (frameWidth <= 0 || frameHeight <= 0) return null
+        synchronized(lock) {
+            if (nativePtr == 0L || !trackLoaded || destroyed) return null
+            if (frameWidth <= 0 || frameHeight <= 0) return null
 
-        val outRect = IntArray(4)
-        val bitmap = nativeRenderFrame(nativePtr, timeMs, outRect)
-            ?: return null
+            return try {
+                val outRect = IntArray(4)
+                val bitmap = nativeRenderFrame(nativePtr, timeMs, outRect)
+                    ?: return null
 
-        lastBitmap = bitmap
-        lastTimeMs = timeMs
+                RenderResult(
+                    bitmap = bitmap,
+                    left = outRect[0],
+                    top = outRect[1],
+                    right = outRect[2],
+                    bottom = outRect[3]
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "renderFrame 异常: ${e.message}")
+                null
+            }
+        }
+    }
 
-        return RenderResult(
-            bitmap = bitmap,
-            left = outRect[0],
-            top = outRect[1],
-            right = outRect[2],
-            bottom = outRect[3]
-        )
+    /**
+     * 内部释放 (lock 已持有时调用)
+     */
+    private fun destroyInternal() {
+        if (nativePtr != 0L) {
+            try {
+                nativeDestroy(nativePtr)
+            } catch (e: Exception) {
+                Log.e(TAG, "nativeDestroy 异常: ${e.message}")
+            }
+            nativePtr = 0
+            trackLoaded = false
+            Log.i(TAG, "资源已释放")
+        }
     }
 
     /**
      * 释放所有资源
      */
     fun destroy() {
-        if (nativePtr != 0L) {
-            nativeDestroy(nativePtr)
-            nativePtr = 0
-            trackLoaded = false
-            lastBitmap = null
-            lastTimeMs = -1
-            Log.i(TAG, "资源已释放")
+        synchronized(lock) {
+            destroyed = true
+            destroyInternal()
         }
     }
 
@@ -187,12 +213,12 @@ class AssRenderer : Closeable {
     /**
      * 是否已初始化
      */
-    val isInitialized: Boolean get() = nativePtr != 0L
+    val isInitialized: Boolean get() = synchronized(lock) { nativePtr != 0L && !destroyed }
 
     /**
      * 是否已加载字幕
      */
-    val isTrackLoaded: Boolean get() = trackLoaded
+    val isTrackLoaded: Boolean get() = synchronized(lock) { trackLoaded && !destroyed }
 
     // ============================================================
     // JNI 原生方法声明
