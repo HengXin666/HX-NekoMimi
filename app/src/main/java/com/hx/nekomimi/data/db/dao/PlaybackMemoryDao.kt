@@ -15,6 +15,16 @@ interface PlaybackMemoryDao {
     @Query("SELECT * FROM playback_memory WHERE filePath = :filePath LIMIT 1")
     suspend fun getByFilePath(filePath: String): PlaybackMemory?
 
+    /**
+     * 按文件名后缀模糊匹配查询记忆
+     * 用于跨 File/URI 模式的记忆恢复:
+     * - File 模式 key: /storage/.../folder/audio.mp3
+     * - URI 模式 key: content://com.android.providers.downloads/.../audio.mp3
+     * 使用 LIKE '%/fileName' 或 LIKE '%fileName' 匹配
+     */
+    @Query("SELECT * FROM playback_memory WHERE filePath LIKE '%' || :fileName ORDER BY savedAt DESC LIMIT 1")
+    suspend fun getByFileNameLike(fileName: String): PlaybackMemory?
+
     /** 获取指定文件夹下所有播放记忆，按记忆时间倒序 */
     @Query("SELECT * FROM playback_memory WHERE folderPath = :folderPath ORDER BY savedAt DESC")
     fun getByFolder(folderPath: String): Flow<List<PlaybackMemory>>

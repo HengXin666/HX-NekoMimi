@@ -630,7 +630,8 @@ fun LibassLyricsView(
         val rendererHolder = remember {
             object {
                 val renderer = AssRenderer()
-                @Volatile var ready = false
+                // 使用 AtomicBoolean 确保跨线程可见性 (IO 线程写, Default 线程读)
+                val ready = java.util.concurrent.atomic.AtomicBoolean(false)
                 // 记录当前设置的帧尺寸，用于检测是否需要更新
                 var currentW = 0
                 var currentH = 0
@@ -648,7 +649,7 @@ fun LibassLyricsView(
                         rendererHolder.currentW = currentScreenWidthPx
                         rendererHolder.currentH = currentRenderHeight
                         val loaded = rendererHolder.renderer.loadTrack(assContent)
-                        rendererHolder.ready = loaded
+                        rendererHolder.ready.set(loaded)
                         isReady = loaded
                         if (loaded) {
                             Log.i("AssLyricsView", "libass 初始化成功: ${currentScreenWidthPx}x${currentRenderHeight}")
@@ -688,7 +689,7 @@ fun LibassLyricsView(
         // 生命周期清理 (必须在 displayBitmap 声明之后，确保 onDispose 能访问到)
         DisposableEffect(Unit) {
             onDispose {
-                rendererHolder.ready = false
+                rendererHolder.ready.set(false)
                 rendererHolder.renderer.destroy()
                 // 回收最后一帧的显示 Bitmap，防止内存泄漏
                 val bmp = displayBitmap
@@ -700,7 +701,7 @@ fun LibassLyricsView(
         }
 
         LaunchedEffect(positionMs, isReady, screenWidthPx, renderHeight) {
-            if (!isReady || !rendererHolder.ready) return@LaunchedEffect
+            if (!isReady || !rendererHolder.ready.get()) return@LaunchedEffect
             withContext(Dispatchers.Default) {
                 try {
                     val result = rendererHolder.renderer.renderFrame(positionMs)

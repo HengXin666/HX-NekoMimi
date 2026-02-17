@@ -43,6 +43,7 @@ interface BookDao {
     @Query("""
         UPDATE book SET 
             lastPlayedFilePath = :filePath,
+            lastPlayedFileUri = :fileUri,
             lastPlayedPositionMs = :positionMs,
             lastPlayedDurationMs = :durationMs,
             lastPlayedDisplayName = :displayName,
@@ -52,6 +53,7 @@ interface BookDao {
     suspend fun updateLastPlayed(
         folderPath: String,
         filePath: String,
+        fileUri: String?,
         positionMs: Long,
         durationMs: Long,
         displayName: String,

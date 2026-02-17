@@ -532,11 +532,13 @@ class PlayerManager @Inject constructor(
         // 加载当前歌曲元信息 (从 URI)
         loadCurrentTrackMetadataFromUri(context, startUri)
 
-        // 恢复上次播放位置
+        // 恢复上次播放位置 (优先精确匹配，降级按文件名模糊匹配)
         scope.launch {
             val memory = repository.getMemory(startUri.toString())
+                ?: repository.getMemoryByFileName(fileName) // 降级: 跨 File/URI 模式匹配
             if (memory != null && memory.positionMs > 0) {
                 player.seekTo(startIndex, memory.positionMs)
+                Log.d("PlayerManager", "loadUrisAndPlay: 恢复记忆 pos=${memory.positionMs}, key=${memory.filePath}")
             }
             player.play()
 
@@ -549,7 +551,7 @@ class PlayerManager @Inject constructor(
      * 从 URI 创建 MediaItem
      */
     private fun createMediaItemFromUri(context: Context, uri: Uri): MediaItem {
-        val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "unknown"
+        val fileName = extractFileNameFromUri(uri)
         val ext = fileName.substringAfterLast('.', "").lowercase()
         val mimeType = getMimeTypeForExtension(ext)
         
@@ -601,8 +603,8 @@ class PlayerManager @Inject constructor(
      */
     private fun loadCurrentTrackMetadataFromUri(context: Context, uri: Uri) {
         scope.launch(Dispatchers.IO) {
+            val retriever = MediaMetadataRetriever()
             try {
-                val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(context, uri)
 
                 val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -612,7 +614,6 @@ class PlayerManager @Inject constructor(
                 val cover = coverBytes?.let {
                     BitmapFactory.decodeByteArray(it, 0, it.size)
                 }
-                retriever.release()
 
                 withContext(Dispatchers.Main) {
                     if (!title.isNullOrBlank()) {
@@ -628,14 +629,17 @@ class PlayerManager @Inject constructor(
                     _currentArtist.value = null
                     _currentAlbum.value = null
                 }
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
             }
         }
     }
 
     /**
-     * 播放指定索引
+     * 播放指定索引 (同时支持 File 模式和 URI 模式)
      */
     fun playAt(index: Int) {
+        // 优先检查 File 模式播放列表
         val files = _playlist.value
         if (index in files.indices) {
             // 先保存当前位置
@@ -656,6 +660,38 @@ class PlayerManager @Inject constructor(
                 val memory = repository.getMemory(files[index].absolutePath)
                 if (memory != null && memory.positionMs > 0) {
                     player.seekTo(index, memory.positionMs)
+                }
+                player.play()
+            }
+            return
+        }
+
+        // URI 模式播放列表 (SAF 隐藏文件夹)
+        val uris = _uriPlaylist.value
+        if (index in uris.indices) {
+            // 先保存当前位置
+            saveCurrentPositionSync()
+
+            val uri = uris[index]
+            _currentIndex.value = index
+            _currentFilePath.value = uri.toString()
+            val fileName = extractFileNameFromUri(uri)
+            val fileNameNoExt = fileName.substringBeforeLast('.')
+            _currentDisplayName.value = fileNameNoExt
+            _currentFileName.value = fileNameNoExt
+
+            player.seekTo(index, 0)
+
+            // 加载当前歌曲元信息 (从 URI)
+            loadCurrentTrackMetadataFromUri(context, uri)
+
+            // 恢复该文件的播放位置 (优先精确匹配，降级按文件名模糊匹配)
+            scope.launch {
+                val memory = repository.getMemory(uri.toString())
+                    ?: repository.getMemoryByFileName(fileName) // 降级: 跨 File/URI 模式匹配
+                if (memory != null && memory.positionMs > 0) {
+                    player.seekTo(index, memory.positionMs)
+                    Log.d("PlayerManager", "playAt(URI): 恢复记忆 pos=${memory.positionMs}, key=${memory.filePath}")
                 }
                 player.play()
             }
@@ -814,8 +850,8 @@ class PlayerManager @Inject constructor(
             return
         }
         scope.launch(Dispatchers.IO) {
+            val retriever = MediaMetadataRetriever()
             try {
-                val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(file.absolutePath)
 
                 val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -825,7 +861,6 @@ class PlayerManager @Inject constructor(
                 val cover = coverBytes?.let {
                     BitmapFactory.decodeByteArray(it, 0, it.size)
                 }
-                retriever.release()
 
                 withContext(Dispatchers.Main) {
                     // 如果有元信息标题，更新显示名称
@@ -842,6 +877,8 @@ class PlayerManager @Inject constructor(
                     _currentArtist.value = null
                     _currentAlbum.value = null
                 }
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
             }
         }
     }
@@ -851,8 +888,8 @@ class PlayerManager @Inject constructor(
      * 在 IO 线程执行，返回 TrackInfo
      */
     suspend fun loadTrackInfo(file: File): TrackInfo = withContext(Dispatchers.IO) {
+        val retriever = MediaMetadataRetriever()
         try {
-            val retriever = MediaMetadataRetriever()
             retriever.setDataSource(file.absolutePath)
 
             val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -865,7 +902,6 @@ class PlayerManager @Inject constructor(
             val cover = coverBytes?.let {
                 BitmapFactory.decodeByteArray(it, 0, it.size)
             }
-            retriever.release()
 
             TrackInfo(
                 file = file,
@@ -881,6 +917,8 @@ class PlayerManager @Inject constructor(
                 title = file.nameWithoutExtension,
                 durationMs = 0
             )
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
         }
     }
 
@@ -933,12 +971,14 @@ class PlayerManager @Inject constructor(
      * 从 URI 加载单个文件的元信息
      */
     private suspend fun loadTrackInfoFromUri(context: Context, uri: Uri): TrackInfo = withContext(Dispatchers.IO) {
+        // 从 URI 获取文件名 (统一使用 extractFileNameFromUri)
+        val fileName = extractFileNameFromUri(uri)
+        val nameWithoutExt = fileName.substringBeforeLast('.')
+        // 创建占位 File 对象 (使用解码后的文件名，便于 UI 显示和比较)
+        val placeholderFile = File(nameWithoutExt)
+
+        val retriever = MediaMetadataRetriever()
         try {
-            // 从 URI 获取文件名
-            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "unknown"
-            val nameWithoutExt = fileName.substringBeforeLast('.')
-            
-            val retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, uri)
 
             val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
@@ -951,11 +991,7 @@ class PlayerManager @Inject constructor(
             val cover = coverBytes?.let {
                 BitmapFactory.decodeByteArray(it, 0, it.size)
             }
-            retriever.release()
 
-            // 创建一个占位 File 对象（用于兼容现有逻辑）
-            val placeholderFile = File(uri.toString())
-            
             TrackInfo(
                 file = placeholderFile,
                 fileUri = uri,
@@ -966,14 +1002,14 @@ class PlayerManager @Inject constructor(
                 coverBitmap = cover
             )
         } catch (e: Exception) {
-            // 创建一个占位 File 对象
-            val placeholderFile = File(uri.toString())
             TrackInfo(
                 file = placeholderFile,
                 fileUri = uri,
-                title = uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "unknown",
+                title = nameWithoutExt,
                 durationMs = 0
             )
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
         }
     }
 

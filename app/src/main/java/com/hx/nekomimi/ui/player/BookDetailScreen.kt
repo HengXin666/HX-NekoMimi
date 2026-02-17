@@ -355,6 +355,7 @@ class BookDetailViewModel @Inject constructor(
             repository.updateBookLastPlayed(
                 folderPath = root,
                 filePath = item.file.absolutePath,
+                fileUri = item.documentUri?.toString(),
                 positionMs = 0,
                 durationMs = 0,
                 displayName = item.file.nameWithoutExtension
@@ -376,8 +377,10 @@ class BookDetailViewModel @Inject constructor(
 
         // SAF 模式: 不做 File.exists() 检查（分区存储下 File API 可能无法访问）
         if (uri != null) {
+            // 优先使用存储的 fileUri 精确定位目标文件，避免特殊字符文件名匹配失败
+            val targetUri = bookVal.lastPlayedFileUri?.let { android.net.Uri.parse(it) }
             playerManager.setAudioBookMode(true)
-            playerManager.loadFolderAndPlay(rootPath, filePath, folderUri = uri)
+            playerManager.loadFolderAndPlay(rootPath, filePath, folderUri = uri, targetUri = targetUri)
             return
         }
 
@@ -455,6 +458,7 @@ fun BookDetailScreen(
     val editDescription by viewModel.editDescription.collectAsStateWithLifecycle()
     val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
     val currentFile by viewModel.playerManager.currentFilePath.collectAsStateWithLifecycle()
+    val currentFileName by viewModel.playerManager.currentFileName.collectAsStateWithLifecycle()
     val isPlaying by viewModel.playerManager.isPlaying.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -694,8 +698,9 @@ fun BookDetailScreen(
                         }
                     )
                 } else {
-                    // 音频文件
-                    val isCurrent = currentFile == item.file.absolutePath
+                    // 音频文件 (用文件名匹配，兼容 SAF URI 模式)
+                    val isCurrent = currentFileName != null &&
+                            currentFileName == item.file.nameWithoutExtension
                     ListItem(
                         headlineContent = {
                             Text(

@@ -104,6 +104,14 @@ class PlaybackRepository @Inject constructor(
     suspend fun getMemory(filePath: String): PlaybackMemory? =
         memoryDao.getByFilePath(filePath)
 
+    /**
+     * 按文件名模糊匹配播放记忆 (降级方案)
+     * 当用精确 key 找不到记忆时，尝试按文件名匹配
+     * 用于跨 File/URI 模式的记忆恢复
+     */
+    suspend fun getMemoryByFileName(fileName: String): PlaybackMemory? =
+        memoryDao.getByFileNameLike(fileName)
+
     /** 获取最近一次播放记忆 */
     suspend fun getLatestMemory(): PlaybackMemory? =
         memoryDao.getLatest()
@@ -209,11 +217,12 @@ class PlaybackRepository @Inject constructor(
     suspend fun updateBookLastPlayed(
         folderPath: String,
         filePath: String,
+        fileUri: String? = null,
         positionMs: Long,
         durationMs: Long,
         displayName: String
     ) {
-        bookDao.updateLastPlayed(folderPath, filePath, positionMs, durationMs, displayName)
+        bookDao.updateLastPlayed(folderPath, filePath, fileUri, positionMs, durationMs, displayName)
     }
 
     /** 更新书的元信息 (标题、描述) */

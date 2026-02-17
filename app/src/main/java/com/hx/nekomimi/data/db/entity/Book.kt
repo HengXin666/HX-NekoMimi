@@ -31,6 +31,8 @@ data class Book(
     val lastUpdatedAt: Long = System.currentTimeMillis(),
     /** 最近播放的文件路径 */
     val lastPlayedFilePath: String? = null,
+    /** 最近播放的文件 SAF URI (用于精确定位 SAF 模式下的文件) */
+    val lastPlayedFileUri: String? = null,
     /** 最近播放的文件位置 (毫秒) */
     val lastPlayedPositionMs: Long = 0,
     /** 最近播放的文件总时长 (毫秒) */

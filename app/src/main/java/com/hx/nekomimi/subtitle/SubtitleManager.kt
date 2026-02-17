@@ -114,38 +114,66 @@ object SubtitleManager {
             return SubtitleResult.None
         }
 
-        // 列出文件夹中所有文件
-        val allFiles = treeDoc.listFiles().map { it.name }
-        Log.d(TAG, "loadForAudioFromUri: files in folder: $allFiles")
-
-        // 在文件夹中查找字幕文件
+        // 先在根目录查找，再递归子文件夹
         for (ext in subtitleExtensions) {
             val subtitleName = "$baseName.$ext"
+            // 先搜根目录
             val subtitleDoc = treeDoc.findFile(subtitleName)
+                // 未找到则递归搜索子文件夹
+                ?: findFileRecursive(treeDoc, subtitleName)
             Log.d(TAG, "loadForAudioFromUri: checking $subtitleName, found=${subtitleDoc != null}")
 
             if (subtitleDoc != null && subtitleDoc.isFile) {
-                Log.i(TAG, "loadForAudioFromUri: found subtitle file: $subtitleName")
-                return when (ext) {
-                    "ass", "ssa" -> {
-                        val rawContent = readUriContent(context, subtitleDoc.uri)
-                        val doc = AssParser.parse(rawContent)
-                        Log.i(TAG, "loadForAudioFromUri: parsed ASS, cues=${doc.cues.size}, styles=${doc.styles.size}")
-                        SubtitleResult.Ass(doc, doc.cues, doc.styles, rawContent)
-                    }
-                    "srt" -> {
-                        val content = readUriContent(context, subtitleDoc.uri)
-                        val cues = SrtParser.parse(content)
-                        Log.i(TAG, "loadForAudioFromUri: parsed SRT, cues=${cues.size}")
-                        SubtitleResult.Srt(cues)
-                    }
-                    else -> SubtitleResult.None
-                }
+                Log.i(TAG, "loadForAudioFromUri: found subtitle file: $subtitleName (uri=${subtitleDoc.uri})")
+                return parseSubtitleDoc(context, ext, subtitleDoc)
             }
         }
 
         Log.w(TAG, "loadForAudioFromUri: no subtitle found for $baseName")
         return SubtitleResult.None
+    }
+
+    /**
+     * 递归在 DocumentFile 目录树中查找指定文件名的文件
+     * @param dir 要搜索的目录
+     * @param fileName 要查找的文件名 (精确匹配)
+     * @param maxDepth 最大递归深度，防止过深遍历
+     * @return 找到的 DocumentFile，未找到返回 null
+     */
+    private fun findFileRecursive(dir: DocumentFile, fileName: String, maxDepth: Int = 5): DocumentFile? {
+        if (maxDepth <= 0) return null
+        for (child in dir.listFiles()) {
+            if (child.isDirectory) {
+                // 先在子目录直接查找
+                val found = child.findFile(fileName)
+                if (found != null && found.isFile) return found
+                // 继续递归更深层子目录
+                val deepFound = findFileRecursive(child, fileName, maxDepth - 1)
+                if (deepFound != null) return deepFound
+            }
+        }
+        return null
+    }
+
+    /**
+     * 解析字幕文件 DocumentFile
+     */
+    private fun parseSubtitleDoc(context: Context, ext: String, subtitleDoc: DocumentFile): SubtitleResult {
+        return when (ext) {
+            "ass", "ssa" -> {
+                val rawContent = readUriContent(context, subtitleDoc.uri)
+                val doc = AssParser.parse(rawContent)
+                Log.i(TAG, "loadForAudioFromUri: parsed ASS, cues=${doc.cues.size}, styles=${doc.styles.size}")
+                SubtitleResult.Ass(doc, doc.cues, doc.styles, rawContent)
+            }
+            "srt" -> {
+                val content = readUriContent(context, subtitleDoc.uri)
+                val cues = SrtParser.parse(content)
+                Log.i(TAG, "loadForAudioFromUri: parsed SRT, cues=${cues.size}")
+                SubtitleResult.Srt(cues)
+            }
+            else -> SubtitleResult.None
+        }
     }
 
     /**
