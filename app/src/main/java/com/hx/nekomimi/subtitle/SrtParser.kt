@@ -76,8 +76,7 @@ object SrtParser {
                     SubtitleCue(
                         startMs = startMs,
                         endMs = endMs,
-                        text = text,
-                        rawText = lines.drop(timeLineIndex + 1).joinToString("\n").trim()
+                        text = text
                     )
                 )
             }

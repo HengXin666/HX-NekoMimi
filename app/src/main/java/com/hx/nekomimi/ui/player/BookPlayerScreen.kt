@@ -38,7 +38,6 @@ import com.hx.nekomimi.data.repository.PlaybackRepository
 import com.hx.nekomimi.player.MemorySaveEvent
 import com.hx.nekomimi.player.PlayerManager
 import com.hx.nekomimi.subtitle.SubtitleManager
-import com.hx.nekomimi.subtitle.model.AssStyle
 import com.hx.nekomimi.subtitle.model.SubtitleCue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -81,9 +80,8 @@ class BookPlayerViewModel @Inject constructor(
 
     // ==================== 字幕 ====================
     val subtitleResult = MutableStateFlow<SubtitleManager.SubtitleResult>(SubtitleManager.SubtitleResult.None)
-    val cues = MutableStateFlow<List<SubtitleCue>>(emptyList())
-    val assStyles = MutableStateFlow<Map<String, AssStyle>>(emptyMap())
-    val assRawContent = MutableStateFlow("") // ASS 文件原始内容，用于 libass 渲染
+    val cues = MutableStateFlow<List<SubtitleCue>>(emptyList()) // 仅 SRT 使用
+    val assRawContent = MutableStateFlow("") // ASS 文件原始内容，交给 libass 渲染
 
     init {
         // 监听文件变化，加载记忆
@@ -122,18 +120,15 @@ class BookPlayerViewModel @Inject constructor(
                 subtitleResult.value = result
                 when (result) {
                     is SubtitleManager.SubtitleResult.Ass -> {
-                        cues.value = result.cues
-                        assStyles.value = result.styles
+                        cues.value = emptyList() // ASS 完全由 libass 渲染
                         assRawContent.value = result.rawContent
                     }
                     is SubtitleManager.SubtitleResult.Srt -> {
                         cues.value = result.cues
-                        assStyles.value = emptyMap()
                         assRawContent.value = ""
                     }
                     SubtitleManager.SubtitleResult.None -> {
                         cues.value = emptyList()
-                        assStyles.value = emptyMap()
                         assRawContent.value = ""
                     }
                 }
@@ -229,7 +224,6 @@ fun BookPlayerScreen(
 
     // 字幕
     val cues by viewModel.cues.collectAsStateWithLifecycle()
-    val assStyles by viewModel.assStyles.collectAsStateWithLifecycle()
     val subtitleResult by viewModel.subtitleResult.collectAsStateWithLifecycle()
     val assRawContent by viewModel.assRawContent.collectAsStateWithLifecycle()
 
@@ -271,8 +265,14 @@ fun BookPlayerScreen(
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium
                         )
-                        // 字幕类型标识
-                        if (cues.isNotEmpty()) {
+                            // 字幕类型标识
+                        if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                            Text(
+                                "📖 ASS 字幕 (libass)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else if (cues.isNotEmpty()) {
                             val subtitleType = when (subtitleResult) {
                                 is SubtitleManager.SubtitleResult.Ass -> "ASS 字幕"
                                 is SubtitleManager.SubtitleResult.Srt -> "SRT 字幕"
@@ -434,8 +434,46 @@ fun BookPlayerScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     when (selectedTab) {
                         0 -> {
-                            // 字幕视图 (同音乐的字幕)
-                            if (cues.isEmpty()) {
+                            // 字幕视图
+                            if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                                // ASS 字幕 (libass 原生渲染)
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    LibassLyricsView(
+                                        assContent = assRawContent,
+                                        positionMs = positionMs
+                                    )
+
+                                    // 渐变遮罩
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(30.dp)
+                                            .align(Alignment.TopCenter)
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        MaterialTheme.colorScheme.surface,
+                                                        MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                                                    )
+                                                )
+                                            )
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(30.dp)
+                                            .align(Alignment.BottomCenter)
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                                                        MaterialTheme.colorScheme.surface
+                                                    )
+                                                )
+                                            )
+                                    )
+                                }
+                            } else if (cues.isEmpty()) {
                                 Box(
                                     modifier = Modifier.fillMaxSize(),
                                     contentAlignment = Alignment.Center
@@ -462,19 +500,7 @@ fun BookPlayerScreen(
                                 }
                             } else {
                                 Box(modifier = Modifier.fillMaxSize()) {
-                                    if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
-                                        AssLyricsView(
-                                            cues = cues,
-                                            styles = assStyles,
-                                            currentIndex = currentSubtitleIndex,
-                                            positionMs = positionMs,
-                                            listState = lyricsListState,
-                                            assContent = assRawContent,
-                                            playResX = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResX ?: 384,
-                                            playResY = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResY ?: 288
-                                        )
-                                    } else {
-                                        SrtLyricsView(
+                                    SrtLyricsView(
                                             cues = cues,
                                             currentIndex = currentSubtitleIndex,
                                             listState = lyricsListState

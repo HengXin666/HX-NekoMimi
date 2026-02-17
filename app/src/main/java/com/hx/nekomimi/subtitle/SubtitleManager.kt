@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
-import com.hx.nekomimi.subtitle.model.AssStyle
 import com.hx.nekomimi.subtitle.model.SubtitleCue
 import java.io.File
 import java.io.InputStreamReader
@@ -29,12 +28,9 @@ object SubtitleManager {
         data object None : SubtitleResult()
         /** SRT 字幕 */
         data class Srt(val cues: List<SubtitleCue>) : SubtitleResult()
-        /** ASS 字幕 (含样式和特效) */
+    /** ASS 字幕 (完全由 libass 原生渲染) */
         data class Ass(
-            val document: AssParser.AssDocument,
-            val cues: List<SubtitleCue>,
-            val styles: Map<String, AssStyle>,
-            val rawContent: String = "" // ASS 文件原始内容，用于 libass 渲染
+            val rawContent: String // ASS 文件原始内容，交给 libass 渲染
         ) : SubtitleResult()
     }
 
@@ -76,9 +72,8 @@ object SubtitleManager {
                 return when (ext) {
                     "ass", "ssa" -> {
                         val rawContent = subtitleFile.readText()
-                        val doc = AssParser.parse(rawContent)
-                        Log.i(TAG, "loadForAudio: parsed ASS, cues=${doc.cues.size}, styles=${doc.styles.size}")
-                        SubtitleResult.Ass(doc, doc.cues, doc.styles, rawContent)
+                        Log.i(TAG, "loadForAudio: found ASS file, size=${rawContent.length}")
+                        SubtitleResult.Ass(rawContent)
                     }
                     "srt" -> {
                         val cues = SrtParser.parse(subtitleFile)
@@ -162,9 +157,8 @@ object SubtitleManager {
         return when (ext) {
             "ass", "ssa" -> {
                 val rawContent = readUriContent(context, subtitleDoc.uri)
-                val doc = AssParser.parse(rawContent)
-                Log.i(TAG, "loadForAudioFromUri: parsed ASS, cues=${doc.cues.size}, styles=${doc.styles.size}")
-                SubtitleResult.Ass(doc, doc.cues, doc.styles, rawContent)
+                Log.i(TAG, "loadForAudioFromUri: found ASS file, size=${rawContent.length}")
+                SubtitleResult.Ass(rawContent)
             }
             "srt" -> {
                 val content = readUriContent(context, subtitleDoc.uri)

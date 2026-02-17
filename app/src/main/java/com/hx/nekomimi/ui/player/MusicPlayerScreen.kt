@@ -32,7 +32,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,8 +46,6 @@ import com.hx.nekomimi.player.PlayMode
 import com.hx.nekomimi.player.PlayerManager
 import com.hx.nekomimi.subtitle.AssRenderer
 import com.hx.nekomimi.subtitle.SubtitleManager
-import com.hx.nekomimi.subtitle.model.AssEffect
-import com.hx.nekomimi.subtitle.model.AssStyle
 import com.hx.nekomimi.subtitle.model.SubtitleCue
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -65,9 +62,8 @@ class MusicPlayerViewModel @Inject constructor(
 ) : AndroidViewModel(application) {
     /** 字幕数据 */
     val subtitleResult = MutableStateFlow<SubtitleManager.SubtitleResult>(SubtitleManager.SubtitleResult.None)
-    val cues = MutableStateFlow<List<SubtitleCue>>(emptyList())
-    val assStyles = MutableStateFlow<Map<String, AssStyle>>(emptyMap())
-    val assRawContent = MutableStateFlow("") // ASS 文件原始内容，用于 libass 渲染
+    val cues = MutableStateFlow<List<SubtitleCue>>(emptyList()) // 仅 SRT 使用
+    val assRawContent = MutableStateFlow("") // ASS 文件原始内容，交给 libass 渲染
 
     init {
         // 监听当前文件变化，自动加载字幕
@@ -86,18 +82,15 @@ class MusicPlayerViewModel @Inject constructor(
                 subtitleResult.value = result
                 when (result) {
                     is SubtitleManager.SubtitleResult.Ass -> {
-                        cues.value = result.cues
-                        assStyles.value = result.styles
+                        cues.value = emptyList() // ASS 完全由 libass 渲染，不需要解析 cues
                         assRawContent.value = result.rawContent
                     }
                     is SubtitleManager.SubtitleResult.Srt -> {
                         cues.value = result.cues
-                        assStyles.value = emptyMap()
                         assRawContent.value = ""
                     }
                     SubtitleManager.SubtitleResult.None -> {
                         cues.value = emptyList()
-                        assStyles.value = emptyMap()
                         assRawContent.value = ""
                     }
                 }
@@ -124,7 +117,6 @@ fun MusicPlayerScreen(
     val currentCover by pm.currentCover.collectAsStateWithLifecycle()
     val playMode by pm.playMode.collectAsStateWithLifecycle()
     val cues by viewModel.cues.collectAsStateWithLifecycle()
-    val assStyles by viewModel.assStyles.collectAsStateWithLifecycle()
     val subtitleResult by viewModel.subtitleResult.collectAsStateWithLifecycle()
     val assRawContent by viewModel.assRawContent.collectAsStateWithLifecycle()
 
@@ -168,13 +160,11 @@ fun MusicPlayerScreen(
                         val subtitleText = buildList {
                             currentArtist?.let { add(it) }
                             currentAlbum?.let { add(it) }
-                            if (cues.isNotEmpty()) {
-                                val subtitleType = when (subtitleResult) {
-                                    is SubtitleManager.SubtitleResult.Ass -> "ASS 歌词"
-                                    is SubtitleManager.SubtitleResult.Srt -> "SRT 歌词"
-                                    else -> ""
-                                }
-                                add("🎤 $subtitleType · ${cues.size} 行")
+                            // ASS 模式下 cues 为空，但仍需显示字幕信息
+                            if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                                add("🎤 ASS 歌词 (libass)")
+                            } else if (cues.isNotEmpty()) {
+                                add("🎤 SRT 歌词 · ${cues.size} 行")
                             }
                         }.joinToString(" · ")
                         if (subtitleText.isNotEmpty()) {
@@ -240,7 +230,13 @@ fun MusicPlayerScreen(
                         .weight(1f)
                         .fillMaxWidth()
                 ) {
-                    if (cues.isEmpty()) {
+                    if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
+                        // ASS 歌词 (libass 原生渲染)
+                        LibassLyricsView(
+                            assContent = assRawContent,
+                            positionMs = positionMs
+                        )
+                    } else if (cues.isEmpty()) {
                         // 无字幕 - 显示封面或大图标
                         Box(
                             modifier = Modifier.fillMaxSize(),
@@ -300,18 +296,6 @@ fun MusicPlayerScreen(
                                 )
                             }
                         }
-                    } else if (subtitleResult is SubtitleManager.SubtitleResult.Ass) {
-                        // ASS 歌词 (libass 原生渲染)
-                        AssLyricsView(
-                            cues = cues,
-                            styles = assStyles,
-                            currentIndex = currentIndex,
-                            positionMs = positionMs,
-                            listState = listState,
-                            assContent = assRawContent,
-                            playResX = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResX ?: 384,
-                            playResY = (subtitleResult as? SubtitleManager.SubtitleResult.Ass)?.document?.playResY ?: 288
-                        )
                     } else {
                         // SRT 歌词 (简洁列表)
                         SrtLyricsView(
@@ -553,47 +537,6 @@ fun SrtLyricsView(
 }
 
 /**
- * ASS 歌词视图 - 使用 libass 原生渲染
- *
- * 优先使用 libass 将整个 ASS 文件渲染为位图，完美支持所有特效。
- * 如果 libass 不可用，自动回退到纯 Compose 文本渲染。
- *
- * @param assContent ASS 文件原始内容
- * @param playResX ASS 视频分辨率宽度
- * @param playResY ASS 视频分辨率高度
- */
-@Composable
-fun AssLyricsView(
-    cues: List<SubtitleCue>,
-    styles: Map<String, AssStyle>,
-    currentIndex: Int,
-    positionMs: Long,
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    assContent: String = "",
-    playResX: Int = 384,
-    playResY: Int = 288
-) {
-    // 尝试使用 libass 原生渲染
-    if (assContent.isNotEmpty() && AssRenderer.isAvailable) {
-        LibassLyricsView(
-            assContent = assContent,
-            positionMs = positionMs,
-            playResX = playResX,
-            playResY = playResY
-        )
-    } else {
-        // 回退: 纯 Compose 文本渲染
-        AssLyricsViewFallback(
-            cues = cues,
-            styles = styles,
-            currentIndex = currentIndex,
-            positionMs = positionMs,
-            listState = listState
-        )
-    }
-}
-
-/**
  * libass 原生渲染视图
  * 将 ASS 字幕通过 libass 渲染为 Bitmap 并显示
  *
@@ -606,18 +549,15 @@ fun AssLyricsView(
 @Composable
 fun LibassLyricsView(
     assContent: String,
-    positionMs: Long,
-    playResX: Int,
-    playResY: Int
+    positionMs: Long
 ) {
     // 获取显示区域尺寸
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val screenWidthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
-    // 使用 ASS 的宽高比计算渲染高度
-    val renderHeight = remember(screenWidthPx, playResX, playResY) {
-        if (playResX > 0) (screenWidthPx.toLong() * playResY / playResX).toInt()
-        else (screenWidthPx * 3 / 4) // 默认 4:3
+    // 默认使用 16:9 宽高比，libass 会根据 ASS 文件中的 PlayResX/PlayResY 自动处理坐标缩放
+    val renderHeight = remember(screenWidthPx) {
+        screenWidthPx * 9 / 16
     }
 
     // 使用 key 让 renderer 在 assContent 变化时重新创建，避免使用已销毁的旧实例
@@ -652,15 +592,15 @@ fun LibassLyricsView(
                         rendererHolder.ready.set(loaded)
                         isReady = loaded
                         if (loaded) {
-                            Log.i("AssLyricsView", "libass 初始化成功: ${currentScreenWidthPx}x${currentRenderHeight}")
+                            Log.i("LibassLyricsView", "libass 初始化成功: ${currentScreenWidthPx}x${currentRenderHeight}")
                         } else {
-                            Log.e("AssLyricsView", "libass loadTrack 失败")
+                            Log.e("LibassLyricsView", "libass loadTrack 失败")
                         }
                     } else {
-                        Log.e("AssLyricsView", "libass init 失败")
+                        Log.e("LibassLyricsView", "libass init 失败")
                     }
                 } catch (e: Exception) {
-                    Log.e("AssLyricsView", "libass 初始化异常", e)
+                    Log.e("LibassLyricsView", "libass 初始化异常", e)
                     isReady = false
                 }
             }
@@ -675,9 +615,9 @@ fun LibassLyricsView(
                         rendererHolder.renderer.setFrameSize(screenWidthPx, renderHeight)
                         rendererHolder.currentW = screenWidthPx
                         rendererHolder.currentH = renderHeight
-                        Log.i("AssLyricsView", "帧尺寸已更新: ${screenWidthPx}x${renderHeight}")
+                        Log.i("LibassLyricsView", "帧尺寸已更新: ${screenWidthPx}x${renderHeight}")
                     } catch (e: Exception) {
-                        Log.e("AssLyricsView", "更新帧尺寸失败", e)
+                        Log.e("LibassLyricsView", "更新帧尺寸失败", e)
                     }
                 }
             }
@@ -722,7 +662,7 @@ fun LibassLyricsView(
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("AssLyricsView", "渲染帧失败", e)
+                    Log.e("LibassLyricsView", "渲染帧失败", e)
                 }
             }
         }
@@ -742,148 +682,6 @@ fun LibassLyricsView(
                         .wrapContentHeight(),
                     contentScale = ContentScale.FillWidth
                 )
-            }
-        }
-    }
-}
-
-/**
- * ASS 歌词回退视图 (纯 Compose 文本渲染, libass 不可用时使用)
- */
-@Composable
-fun AssLyricsViewFallback(
-    cues: List<SubtitleCue>,
-    styles: Map<String, AssStyle>,
-    currentIndex: Int,
-    positionMs: Long,
-    listState: androidx.compose.foundation.lazy.LazyListState
-) {
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 80.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        itemsIndexed(cues) { index, cue ->
-            val isCurrent = index == currentIndex
-            val style = cue.styleName?.let { styles[it] }
-
-            AssStyledText(
-                cue = cue,
-                style = style,
-                isCurrent = isCurrent,
-                currentPositionMs = positionMs
-            )
-        }
-    }
-}
-
-/**
- * 单行 ASS 特效文本渲染
- * 支持: 颜色、加粗、斜体、字号、淡入淡出、描边、阴影、卡拉OK特效
- */
-@Composable
-fun AssStyledText(
-    cue: SubtitleCue,
-    style: AssStyle?,
-    isCurrent: Boolean,
-    currentPositionMs: Long
-) {
-    // 检测是否有卡拉OK特效
-    if (hasKaraokeEffect(cue)) {
-        // 使用卡拉OK渲染器
-        KaraokeText(
-            syllables = cue.karaokeSyllables,
-            style = style,
-            isCurrent = isCurrent,
-            cueStartMs = cue.startMs,
-            currentPositionMs = currentPositionMs,
-            modifier = Modifier.fillMaxWidth()
-        )
-        return
-    }
-
-    var textColor = style?.let { Color(it.primaryColor) }
-        ?: MaterialTheme.colorScheme.onSurface
-    var fontSize = style?.fontSize ?: 18f
-    var bold = style?.bold ?: false
-    var italic = style?.italic ?: false
-    var outlineSize = style?.outline ?: 0f
-    var outlineColor = style?.let { Color(it.outlineColor) } ?: Color.Black
-    var shadowDepth = style?.shadow ?: 0f
-    var fadeInMs = 0L
-    var fadeOutMs = 0L
-
-    for (effect in cue.effects) {
-        when (effect) {
-            is AssEffect.Color -> {
-                if (effect.colorType == 1 || effect.colorType == 0) {
-                    textColor = Color(effect.argb)
-                }
-            }
-            is AssEffect.Bold -> bold = effect.enabled
-            is AssEffect.Italic -> italic = effect.enabled
-            is AssEffect.FontSize -> fontSize = effect.size
-            is AssEffect.Fade -> {
-                fadeInMs = effect.fadeInMs
-                fadeOutMs = effect.fadeOutMs
-            }
-            is AssEffect.Border -> outlineSize = effect.size
-            is AssEffect.Shadow -> shadowDepth = effect.depth
-            is AssEffect.Alpha -> {
-                if (effect.alphaType == 0 || effect.alphaType == 1) {
-                    textColor = textColor.copy(alpha = effect.value / 255f)
-                }
-            }
-            else -> {}
-        }
-    }
-
-    var alpha = if (isCurrent) 1f else 0.35f
-    if (isCurrent && (fadeInMs > 0 || fadeOutMs > 0)) {
-        val elapsed = currentPositionMs - cue.startMs
-        val remaining = cue.endMs - currentPositionMs
-        alpha = when {
-            fadeInMs > 0 && elapsed < fadeInMs -> (elapsed.toFloat() / fadeInMs).coerceIn(0f, 1f)
-            fadeOutMs > 0 && remaining < fadeOutMs -> (remaining.toFloat() / fadeOutMs).coerceIn(0f, 1f)
-            else -> 1f
-        }
-    }
-
-    val finalColor = if (isCurrent) textColor.copy(alpha = alpha)
-    else textColor.copy(alpha = 0.3f)
-
-    val displayFontSize = if (isCurrent) (fontSize * 1.2f) else fontSize
-
-    // 分割多行文本，每行独立渲染
-    val lines = cue.text.split("\n")
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        lines.forEachIndexed { index, line ->
-            Text(
-                text = line,
-                style = TextStyle(
-                    fontSize = displayFontSize.sp,
-                    fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-                    fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
-                    color = finalColor,
-                    textAlign = TextAlign.Center,
-                    lineHeight = (displayFontSize * 1.4f).sp,
-                    shadow = if (shadowDepth > 0 || outlineSize > 0) {
-                        Shadow(
-                            color = outlineColor.copy(alpha = alpha),
-                            offset = Offset(shadowDepth, shadowDepth),
-                            blurRadius = outlineSize * 2
-                        )
-                    } else null
-                )
-            )
-            // 行间距
-            if (index < lines.size - 1 && lines.size > 1) {
-                Spacer(modifier = Modifier.height(4.dp))
             }
         }
     }
