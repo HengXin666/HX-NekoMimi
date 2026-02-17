@@ -201,7 +201,6 @@ build_fribidi() {
         --prefix="${PREFIX}" \
         --enable-static \
         --disable-shared \
-        --disable-docs \
         --with-pic
 
     make -j${CORES}
@@ -226,7 +225,7 @@ build_harfbuzz() {
     mkdir -p "$SRC/_build"
     cd "$SRC/_build"
 
-    # 需要让 HarfBuzz 找到 FreeType
+    # 需要让 HarfBuzz 找到 FreeType (显式指定路径, 避免 NDK toolchain 覆盖 CMAKE_PREFIX_PATH)
     cmake .. \
         -DCMAKE_TOOLCHAIN_FILE="${NDK_CMAKE_TOOLCHAIN}" \
         -DANDROID_ABI="${ABI}" \
@@ -234,6 +233,12 @@ build_harfbuzz() {
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
         -DCMAKE_PREFIX_PATH="${PREFIX}" \
+        -DCMAKE_FIND_ROOT_PATH="${PREFIX}" \
+        -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
+        -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
+        -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+        -DFREETYPE_LIBRARY="${PREFIX}/lib/libfreetype.a" \
+        -DFREETYPE_INCLUDE_DIRS="${PREFIX}/include/freetype2" \
         -DBUILD_SHARED_LIBS=OFF \
         -DHB_HAVE_FREETYPE=ON \
         -DHB_HAVE_GLIB=OFF \
