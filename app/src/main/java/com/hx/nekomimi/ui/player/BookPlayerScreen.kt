@@ -1,5 +1,6 @@
 package com.hx.nekomimi.ui.player
 
+import android.app.Application
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
@@ -28,7 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.data.db.entity.Bookmark
@@ -50,9 +51,10 @@ import kotlin.math.abs
 
 @HiltViewModel
 class BookPlayerViewModel @Inject constructor(
+    application: Application,
     val playerManager: PlayerManager,
     private val repository: PlaybackRepository
-) : ViewModel() {
+) : AndroidViewModel(application) {
 
     /** 当前文件的书签列表 */
     val bookmarks: StateFlow<List<Bookmark>> = playerManager.currentFilePath
@@ -81,6 +83,7 @@ class BookPlayerViewModel @Inject constructor(
     val subtitleResult = MutableStateFlow<SubtitleManager.SubtitleResult>(SubtitleManager.SubtitleResult.None)
     val cues = MutableStateFlow<List<SubtitleCue>>(emptyList())
     val assStyles = MutableStateFlow<Map<String, AssStyle>>(emptyMap())
+    val assRawContent = MutableStateFlow("") // ASS 文件原始内容，用于 libass 渲染
 
     init {
         // 监听文件变化，加载记忆
@@ -120,14 +123,17 @@ class BookPlayerViewModel @Inject constructor(
                     is SubtitleManager.SubtitleResult.Ass -> {
                         cues.value = result.cues
                         assStyles.value = result.styles
+                        assRawContent.value = result.rawContent
                     }
                     is SubtitleManager.SubtitleResult.Srt -> {
                         cues.value = result.cues
                         assStyles.value = emptyMap()
+                        assRawContent.value = ""
                     }
                     SubtitleManager.SubtitleResult.None -> {
                         cues.value = emptyList()
                         assStyles.value = emptyMap()
+                        assRawContent.value = ""
                     }
                 }
             }
@@ -213,6 +219,7 @@ fun BookPlayerScreen(
     val cues by viewModel.cues.collectAsStateWithLifecycle()
     val assStyles by viewModel.assStyles.collectAsStateWithLifecycle()
     val subtitleResult by viewModel.subtitleResult.collectAsStateWithLifecycle()
+    val assRawContent by viewModel.assRawContent.collectAsStateWithLifecycle()
 
     val currentSubtitleIndex = remember(cues, positionMs) {
         SubtitleManager.findCurrentIndex(cues, positionMs)
@@ -449,7 +456,8 @@ fun BookPlayerScreen(
                                             styles = assStyles,
                                             currentIndex = currentSubtitleIndex,
                                             positionMs = positionMs,
-                                            listState = lyricsListState
+                                            listState = lyricsListState,
+                                            assContent = assRawContent
                                         )
                                     } else {
                                         SrtLyricsView(

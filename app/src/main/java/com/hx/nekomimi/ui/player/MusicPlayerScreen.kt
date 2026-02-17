@@ -1,5 +1,6 @@
 package com.hx.nekomimi.ui.player
 
+import android.app.Application
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -36,7 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.player.PlayMode
@@ -53,12 +54,14 @@ import javax.inject.Inject
 
 @HiltViewModel
 class MusicPlayerViewModel @Inject constructor(
+    application: Application,
     val playerManager: PlayerManager
-) : ViewModel() {
+) : AndroidViewModel(application) {
     /** 字幕数据 */
     val subtitleResult = MutableStateFlow<SubtitleManager.SubtitleResult>(SubtitleManager.SubtitleResult.None)
     val cues = MutableStateFlow<List<SubtitleCue>>(emptyList())
     val assStyles = MutableStateFlow<Map<String, AssStyle>>(emptyMap())
+    val assRawContent = MutableStateFlow("") // ASS 文件原始内容，用于 libass 渲染
 
     init {
         // 监听当前文件变化，自动加载字幕
@@ -78,14 +81,17 @@ class MusicPlayerViewModel @Inject constructor(
                     is SubtitleManager.SubtitleResult.Ass -> {
                         cues.value = result.cues
                         assStyles.value = result.styles
+                        assRawContent.value = result.rawContent
                     }
                     is SubtitleManager.SubtitleResult.Srt -> {
                         cues.value = result.cues
                         assStyles.value = emptyMap()
+                        assRawContent.value = ""
                     }
                     SubtitleManager.SubtitleResult.None -> {
                         cues.value = emptyList()
                         assStyles.value = emptyMap()
+                        assRawContent.value = ""
                     }
                 }
             }
@@ -113,6 +119,7 @@ fun MusicPlayerScreen(
     val cues by viewModel.cues.collectAsStateWithLifecycle()
     val assStyles by viewModel.assStyles.collectAsStateWithLifecycle()
     val subtitleResult by viewModel.subtitleResult.collectAsStateWithLifecycle()
+    val assRawContent by viewModel.assRawContent.collectAsStateWithLifecycle()
 
     // 是否显示文件位置信息 BottomSheet
     var showFileInfoSheet by remember { mutableStateOf(false) }
@@ -293,7 +300,8 @@ fun MusicPlayerScreen(
                             styles = assStyles,
                             currentIndex = currentIndex,
                             positionMs = positionMs,
-                            listState = listState
+                            listState = listState,
+                            assContent = assRawContent
                         )
                     } else {
                         // SRT 歌词 (简洁列表)
@@ -537,6 +545,7 @@ fun SrtLyricsView(
 
 /**
  * ASS 歌词视图 (支持特效渲染)
+ * @param assContent ASS 文件原始内容，用于 libass 渲染（可选）
  */
 @Composable
 fun AssLyricsView(
@@ -544,7 +553,8 @@ fun AssLyricsView(
     styles: Map<String, AssStyle>,
     currentIndex: Int,
     positionMs: Long,
-    listState: androidx.compose.foundation.lazy.LazyListState
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    assContent: String = ""
 ) {
     LazyColumn(
         state = listState,
