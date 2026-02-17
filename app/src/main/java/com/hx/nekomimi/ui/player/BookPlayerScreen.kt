@@ -501,11 +501,10 @@ fun BookPlayerScreen(
                             } else {
                                 Box(modifier = Modifier.fillMaxSize()) {
                                     SrtLyricsView(
-                                            cues = cues,
-                                            currentIndex = currentSubtitleIndex,
-                                            listState = lyricsListState
-                                        )
-                                    }
+                                        cues = cues,
+                                        currentIndex = currentSubtitleIndex,
+                                        listState = lyricsListState
+                                    )
 
                                     // 渐变遮罩
                                     Box(
