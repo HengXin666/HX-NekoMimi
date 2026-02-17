@@ -16,6 +16,11 @@ on:
         required: true
         type: string
 
+# 避免同一个 commit 重复触发导致并发冲突
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: true
+
 jobs:
   build-and-release:
     name: 打包并发布 APK
