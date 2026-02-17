@@ -59,7 +59,9 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            echo "tag_name=${{ github.sha }}" >> $GITHUB_OUTPUT
+            # 使用短 commit SHA，格式: HX-abc1234
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "tag_name=HX-${SHORT_SHA}" >> $GITHUB_OUTPUT
             echo "release_notes=非正式发行版本，基于 commit ${{ github.sha }}" >> $GITHUB_OUTPUT
           else
             echo "tag_name=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
