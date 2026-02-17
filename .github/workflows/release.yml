@@ -55,7 +55,7 @@ jobs:
         if: steps.cache-libass.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config
+          sudo apt-get install -y ninja-build pkg-config cmake autoconf automake libtool
 
       - name: 编译 libass 依赖
         if: steps.cache-libass.outputs.cache-hit != 'true'

@@ -1,13 +1,15 @@
 #!/bin/bash
 # ============================================================
 # libass Android 依赖编译脚本
-# 编译 FreeType、FriBidi、HarfBuzz、libass 为 Android 静态库
+# 参考: mpv-android (autotools) + libass-cmake (CMake)
+#
+# 编译 FreeType (CMake) + FriBidi (autotools) + HarfBuzz (CMake) + libass (autotools)
 #
 # 使用方法:
 #   export ANDROID_NDK_HOME=/path/to/ndk
 #   bash build_deps.sh
 #
-# 前置条件: autotools, meson, ninja, pkg-config, nasm
+# 前置条件: cmake, ninja, pkg-config, autoconf, automake, libtool
 # ============================================================
 
 set -e
@@ -25,9 +27,13 @@ LIBASS_VERSION="0.17.3"
 # 目标架构
 ABIS=("arm64-v8a" "armeabi-v7a" "x86_64")
 
-# 检查 NDK
+# 编译线程数
+CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+# ============================================================
+# NDK 检测和工具链设置
+# ============================================================
 if [ -z "$ANDROID_NDK_HOME" ]; then
-    # 尝试自动查找
     if [ -d "$HOME/Android/Sdk/ndk" ]; then
         ANDROID_NDK_HOME=$(ls -d "$HOME/Android/Sdk/ndk"/*/ 2>/dev/null | sort -V | tail -1)
         ANDROID_NDK_HOME="${ANDROID_NDK_HOME%/}"
@@ -39,6 +45,7 @@ if [ -z "$ANDROID_NDK_HOME" ]; then
 fi
 echo "NDK 路径: $ANDROID_NDK_HOME"
 
+# 查找 NDK 工具链
 TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
 if [ ! -d "$TOOLCHAIN" ]; then
     TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/darwin-x86_64"
@@ -48,10 +55,21 @@ if [ ! -d "$TOOLCHAIN" ]; then
     exit 1
 fi
 
+# 查找 NDK 自带的 CMake toolchain 文件
+NDK_CMAKE_TOOLCHAIN="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake"
+if [ ! -f "$NDK_CMAKE_TOOLCHAIN" ]; then
+    echo "错误: 找不到 NDK CMake toolchain 文件: ${NDK_CMAKE_TOOLCHAIN}"
+    exit 1
+fi
+
 API_LEVEL=26
 
-# 架构映射
-get_triple() {
+# ============================================================
+# 架构映射函数
+# ============================================================
+
+# autotools 的 host triple
+get_autotools_host() {
     case $1 in
         arm64-v8a)   echo "aarch64-linux-android" ;;
         armeabi-v7a) echo "armv7a-linux-androideabi" ;;
@@ -59,23 +77,18 @@ get_triple() {
     esac
 }
 
-get_arch() {
+# NDK clang 的 target triple (用于 CC/CXX)
+get_clang_target() {
     case $1 in
-        arm64-v8a)   echo "aarch64" ;;
-        armeabi-v7a) echo "arm" ;;
-        x86_64)      echo "x86_64" ;;
+        arm64-v8a)   echo "aarch64-linux-android${API_LEVEL}" ;;
+        armeabi-v7a) echo "armv7a-linux-androideabi${API_LEVEL}" ;;
+        x86_64)      echo "x86_64-linux-android${API_LEVEL}" ;;
     esac
 }
 
-get_meson_cpu_family() {
-    case $1 in
-        arm64-v8a)   echo "aarch64" ;;
-        armeabi-v7a) echo "arm" ;;
-        x86_64)      echo "x86_64" ;;
-    esac
-}
-
+# ============================================================
 # 下载源码
+# ============================================================
 download_sources() {
     mkdir -p "${BUILD_DIR}/sources"
     cd "${BUILD_DIR}/sources"
@@ -101,186 +114,188 @@ download_sources() {
     fi
 }
 
-# 设置交叉编译环境
-setup_env() {
+# ============================================================
+# 设置 autotools 交叉编译环境变量
+# (参考 mpv-android + libass-cmake)
+# ============================================================
+setup_autotools_env() {
     local ABI=$1
-    local TRIPLE=$(get_triple $ABI)
-
-    export CC="${TOOLCHAIN}/bin/${TRIPLE}${API_LEVEL}-clang"
-    export CXX="${TOOLCHAIN}/bin/${TRIPLE}${API_LEVEL}-clang++"
-    export AR="${TOOLCHAIN}/bin/llvm-ar"
-    export AS="${TOOLCHAIN}/bin/llvm-as"
-    export LD="${TOOLCHAIN}/bin/ld"
-    export RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
-    export STRIP="${TOOLCHAIN}/bin/llvm-strip"
-    export NM="${TOOLCHAIN}/bin/llvm-nm"
-
-    # armeabi-v7a 特殊处理
-    if [ "$ABI" = "armeabi-v7a" ]; then
-        export CC="${TOOLCHAIN}/bin/armv7a-linux-androideabi${API_LEVEL}-clang"
-        export CXX="${TOOLCHAIN}/bin/armv7a-linux-androideabi${API_LEVEL}-clang++"
-    fi
+    local CLANG_TARGET=$(get_clang_target $ABI)
 
     PREFIX="${PREFIX_BASE}/${ABI}"
     mkdir -p "$PREFIX"
 
-    export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/lib64/pkgconfig"
+    export CC="${TOOLCHAIN}/bin/clang --target=${CLANG_TARGET}"
+    export CXX="${TOOLCHAIN}/bin/clang++ --target=${CLANG_TARGET}"
+    export AR="${TOOLCHAIN}/bin/llvm-ar"
+    export RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
+    export STRIP="${TOOLCHAIN}/bin/llvm-strip"
+    export NM="${TOOLCHAIN}/bin/llvm-nm"
+    export OBJDUMP="${TOOLCHAIN}/bin/llvm-objdump"
+
+    export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
+    export PKG_CONFIG_LIBDIR="${PREFIX}/lib/pkgconfig"
     export PKG_CONFIG_SYSROOT_DIR=""
-    export CFLAGS="-O2 -fPIC -I${PREFIX}/include -I${PREFIX}/include/freetype2"
-    export CXXFLAGS="-O2 -fPIC -I${PREFIX}/include -I${PREFIX}/include/freetype2"
+    export CFLAGS="-O2 -fPIC -I${PREFIX}/include"
+    export CXXFLAGS="-O2 -fPIC -I${PREFIX}/include"
     export LDFLAGS="-L${PREFIX}/lib"
 }
 
-# 生成 Meson 交叉编译文件
-create_meson_cross_file() {
-    local ABI=$1
-    local TRIPLE=$(get_triple $ABI)
-    local CPU_FAMILY=$(get_meson_cpu_family $ABI)
-    local CROSS_FILE="${BUILD_DIR}/meson-${ABI}.txt"
-
-    local CC_PATH="${TOOLCHAIN}/bin/${TRIPLE}${API_LEVEL}-clang"
-    local CXX_PATH="${TOOLCHAIN}/bin/${TRIPLE}${API_LEVEL}-clang++"
-    if [ "$ABI" = "armeabi-v7a" ]; then
-        CC_PATH="${TOOLCHAIN}/bin/armv7a-linux-androideabi${API_LEVEL}-clang"
-        CXX_PATH="${TOOLCHAIN}/bin/armv7a-linux-androideabi${API_LEVEL}-clang++"
-    fi
-
-    cat > "$CROSS_FILE" << EOF
-[binaries]
-c = '${CC_PATH}'
-cpp = '${CXX_PATH}'
-ar = '${TOOLCHAIN}/bin/llvm-ar'
-strip = '${TOOLCHAIN}/bin/llvm-strip'
-ranlib = '${TOOLCHAIN}/bin/llvm-ranlib'
-pkgconfig = 'pkg-config'
-
-[properties]
-pkg_config_libdir = '${PREFIX_BASE}/${ABI}/lib/pkgconfig'
-
-[host_machine]
-system = 'android'
-cpu_family = '${CPU_FAMILY}'
-cpu = '${CPU_FAMILY}'
-endian = 'little'
-
-[built-in options]
-c_args = ['-O2', '-fPIC', '-I${PREFIX_BASE}/${ABI}/include', '-I${PREFIX_BASE}/${ABI}/include/freetype2']
-cpp_args = ['-O2', '-fPIC', '-I${PREFIX_BASE}/${ABI}/include', '-I${PREFIX_BASE}/${ABI}/include/freetype2']
-c_link_args = ['-L${PREFIX_BASE}/${ABI}/lib']
-cpp_link_args = ['-L${PREFIX_BASE}/${ABI}/lib']
-default_library = 'static'
-prefix = '${PREFIX_BASE}/${ABI}'
-EOF
-    echo "$CROSS_FILE"
-}
-
-# 编译 FreeType
+# ============================================================
+# 编译 FreeType (使用 CMake + NDK toolchain)
+# 参考: libass-cmake/cmake/freetype.cmake
+# ============================================================
 build_freetype() {
     local ABI=$1
-    echo "===== 编译 FreeType (${ABI}) ====="
+    echo "===== 编译 FreeType ${FREETYPE_VERSION} (${ABI}) [CMake] ====="
 
     local SRC="${BUILD_DIR}/freetype-${FREETYPE_VERSION}-${ABI}"
     rm -rf "$SRC"
     cd "${BUILD_DIR}/sources"
     tar xf "freetype-${FREETYPE_VERSION}.tar.xz" -C "${BUILD_DIR}"
     mv "${BUILD_DIR}/freetype-${FREETYPE_VERSION}" "$SRC"
-    cd "$SRC"
 
-    local CROSS_FILE=$(create_meson_cross_file $ABI)
-    meson setup builddir \
-        --cross-file="$CROSS_FILE" \
-        --default-library=static \
-        --prefix="${PREFIX}" \
-        -Dharfbuzz=disabled \
-        -Dbzip2=disabled \
-        -Dpng=disabled \
-        -Dzlib=disabled \
-        -Dbrotli=disabled
-    ninja -C builddir
-    ninja -C builddir install
+    mkdir -p "$SRC/_build"
+    cd "$SRC/_build"
+
+    cmake .. \
+        -DCMAKE_TOOLCHAIN_FILE="${NDK_CMAKE_TOOLCHAIN}" \
+        -DANDROID_ABI="${ABI}" \
+        -DANDROID_PLATFORM="android-${API_LEVEL}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DFT_DISABLE_HARFBUZZ=ON \
+        -DFT_DISABLE_BZIP2=ON \
+        -DFT_DISABLE_PNG=ON \
+        -DFT_DISABLE_BROTLI=ON \
+        -DFT_DISABLE_ZLIB=OFF \
+        -DDISABLE_FORCE_DEBUG_POSTFIX=ON \
+        -G Ninja
+
+    ninja -j${CORES}
+    ninja install
+    echo "✅ FreeType (${ABI}) 完成"
 }
 
-# 编译 FriBidi
+# ============================================================
+# 编译 FriBidi (使用 autotools configure/make)
+# 参考: libass-cmake/cmake/fribidi.cmake + mpv-android
+# ============================================================
 build_fribidi() {
     local ABI=$1
-    echo "===== 编译 FriBidi (${ABI}) ====="
+    local HOST=$(get_autotools_host $ABI)
+    echo "===== 编译 FriBidi ${FRIBIDI_VERSION} (${ABI}) [autotools] ====="
 
     local SRC="${BUILD_DIR}/fribidi-${FRIBIDI_VERSION}-${ABI}"
     rm -rf "$SRC"
     cd "${BUILD_DIR}/sources"
     tar xf "fribidi-${FRIBIDI_VERSION}.tar.xz" -C "${BUILD_DIR}"
     mv "${BUILD_DIR}/fribidi-${FRIBIDI_VERSION}" "$SRC"
-    cd "$SRC"
 
-    local CROSS_FILE=$(create_meson_cross_file $ABI)
-    meson setup builddir \
-        --cross-file="$CROSS_FILE" \
-        --default-library=static \
+    mkdir -p "$SRC/_build"
+    cd "$SRC/_build"
+
+    ../configure \
+        --host="${HOST}" \
         --prefix="${PREFIX}" \
-        -Ddocs=false \
-        -Dbin=false \
-        -Dtests=false
-    ninja -C builddir
-    ninja -C builddir install
+        --enable-static \
+        --disable-shared \
+        --disable-docs \
+        --with-pic
+
+    make -j${CORES}
+    make install
+    echo "✅ FriBidi (${ABI}) 完成"
 }
 
-# 编译 HarfBuzz
+# ============================================================
+# 编译 HarfBuzz (使用 CMake + NDK toolchain)
+# 参考: libass-cmake/cmake/harfbuzz.cmake
+# ============================================================
 build_harfbuzz() {
     local ABI=$1
-    echo "===== 编译 HarfBuzz (${ABI}) ====="
+    echo "===== 编译 HarfBuzz ${HARFBUZZ_VERSION} (${ABI}) [CMake] ====="
 
     local SRC="${BUILD_DIR}/harfbuzz-${HARFBUZZ_VERSION}-${ABI}"
     rm -rf "$SRC"
     cd "${BUILD_DIR}/sources"
     tar xf "harfbuzz-${HARFBUZZ_VERSION}.tar.xz" -C "${BUILD_DIR}"
     mv "${BUILD_DIR}/harfbuzz-${HARFBUZZ_VERSION}" "$SRC"
-    cd "$SRC"
 
-    local CROSS_FILE=$(create_meson_cross_file $ABI)
-    meson setup builddir \
-        --cross-file="$CROSS_FILE" \
-        --default-library=static \
-        --prefix="${PREFIX}" \
-        -Dfreetype=enabled \
-        -Dglib=disabled \
-        -Dgobject=disabled \
-        -Dcairo=disabled \
-        -Dicu=disabled \
-        -Dtests=disabled \
-        -Ddocs=disabled
-    ninja -C builddir
-    ninja -C builddir install
+    mkdir -p "$SRC/_build"
+    cd "$SRC/_build"
+
+    # 需要让 HarfBuzz 找到 FreeType
+    cmake .. \
+        -DCMAKE_TOOLCHAIN_FILE="${NDK_CMAKE_TOOLCHAIN}" \
+        -DANDROID_ABI="${ABI}" \
+        -DANDROID_PLATFORM="android-${API_LEVEL}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+        -DCMAKE_PREFIX_PATH="${PREFIX}" \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DHB_HAVE_FREETYPE=ON \
+        -DHB_HAVE_GLIB=OFF \
+        -DHB_HAVE_GOBJECT=OFF \
+        -DHB_HAVE_CAIRO=OFF \
+        -DHB_HAVE_ICU=OFF \
+        -DHB_BUILD_TESTS=OFF \
+        -G Ninja
+
+    ninja -j${CORES}
+    ninja install
+    echo "✅ HarfBuzz (${ABI}) 完成"
 }
 
-# 编译 libass
+# ============================================================
+# 编译 libass (使用 autotools configure/make)
+# 关键: --disable-require-system-font-provider
+# 参考: mpv-android/buildscripts/scripts/libass.sh
+# ============================================================
 build_libass() {
     local ABI=$1
-    echo "===== 编译 libass (${ABI}) ====="
+    local HOST=$(get_autotools_host $ABI)
+    echo "===== 编译 libass ${LIBASS_VERSION} (${ABI}) [autotools] ====="
 
     local SRC="${BUILD_DIR}/libass-${LIBASS_VERSION}-${ABI}"
     rm -rf "$SRC"
     cd "${BUILD_DIR}/sources"
     tar xf "libass-${LIBASS_VERSION}.tar.xz" -C "${BUILD_DIR}"
     mv "${BUILD_DIR}/libass-${LIBASS_VERSION}" "$SRC"
-    cd "$SRC"
 
-    local CROSS_FILE=$(create_meson_cross_file $ABI)
-    meson setup builddir \
-        --cross-file="$CROSS_FILE" \
-        --default-library=static \
+    mkdir -p "$SRC/_build"
+    cd "$SRC/_build"
+
+    # 确保 pkg-config 能找到 freetype2, fribidi, harfbuzz
+    export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig"
+
+    ../configure \
+        --host="${HOST}" \
         --prefix="${PREFIX}" \
-        -Dfontconfig=disabled \
-        -Ddirectwrite=disabled \
-        -Dcoretext=disabled \
-        -Dasm=disabled \
-        -Drequire-system-font-provider=false
-    ninja -C builddir
-    ninja -C builddir install
+        --enable-static \
+        --disable-shared \
+        --with-pic \
+        --disable-fontconfig \
+        --disable-require-system-font-provider \
+        --disable-asm
+
+    make -j${CORES}
+    make install
+    echo "✅ libass (${ABI}) 完成"
 }
 
+# ============================================================
 # 主流程
+# ============================================================
 echo "==========================================="
 echo "  libass Android 依赖编译"
+echo "  (参考 mpv-android + libass-cmake)"
+echo "==========================================="
+echo "  FreeType  ${FREETYPE_VERSION} → CMake"
+echo "  FriBidi   ${FRIBIDI_VERSION} → autotools"
+echo "  HarfBuzz  ${HARFBUZZ_VERSION} → CMake"
+echo "  libass    ${LIBASS_VERSION} → autotools"
 echo "==========================================="
 
 mkdir -p "${BUILD_DIR}"
@@ -294,13 +309,25 @@ for ABI in "${ABIS[@]}"; do
     echo "  编译目标架构: ${ABI}"
     echo "==========================================="
 
-    setup_env $ABI
+    setup_autotools_env $ABI
     build_freetype $ABI
     build_fribidi $ABI
     build_harfbuzz $ABI
     build_libass $ABI
 
-    echo "✅ ${ABI} 编译完成"
+    echo "✅ ${ABI} 全部完成"
+done
+
+echo ""
+echo "==========================================="
+echo "  全部编译完成！"
+echo "  输出目录: ${PREFIX_BASE}"
+echo "==========================================="
+ls -la "${PREFIX_BASE}/"
+for ABI in "${ABIS[@]}"; do
+    echo ""
+    echo "--- ${ABI} ---"
+    ls -la "${PREFIX_BASE}/${ABI}/lib/"*.a 2>/dev/null || echo "  (无 .a 文件)"
 done
 
 echo ""
