@@ -704,7 +704,7 @@ fun BookDetailScreen(
                     ListItem(
                         headlineContent = {
                             Text(
-                                item.file.nameWithoutExtension,
+                                item.file.name,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 color = if (isCurrent) MaterialTheme.colorScheme.primary
@@ -719,12 +719,6 @@ fun BookDetailScreen(
                                 contentDescription = null,
                                 tint = if (isCurrent) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        supportingContent = {
-                            Text(
-                                item.file.extension.uppercase(),
-                                style = MaterialTheme.typography.labelSmall
                             )
                         },
                         trailingContent = {

@@ -352,13 +352,21 @@ class PlayerManager @Inject constructor(
      * @param targetUri 目标文件的 SAF URI (直接匹配，避免依赖文件名)
      */
     fun loadFolderAndPlay(folderPath: String, filePath: String, playlistId: Long? = null, folderUri: android.net.Uri? = null, targetUri: android.net.Uri? = null) {
-        // 优先尝试 SAF 方式 (支持隐藏文件夹、分区存储)
-        if (folderUri != null) {
-            val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
-            if (treeDoc != null && treeDoc.exists()) {
-                val uriList = mutableListOf<Uri>()
-                scanDocumentFileUrisRecursive(treeDoc, uriList)
-                if (uriList.isNotEmpty()) {
+        scope.launch {
+            // 耗时的扫描操作在 IO 线程执行，避免阻塞主线程导致 UI 卡顿
+            // 优先尝试 SAF 方式 (支持隐藏文件夹、分区存储)
+            if (folderUri != null) {
+                val safHandled = withContext(Dispatchers.IO) {
+                    val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, folderUri)
+                    if (treeDoc != null && treeDoc.exists()) {
+                        val uriList = mutableListOf<Uri>()
+                        scanDocumentFileUrisRecursive(treeDoc, uriList)
+                        if (uriList.isNotEmpty()) uriList else null
+                    } else null
+                }
+
+                if (safHandled != null) {
+                    val uriList = safHandled
                     Log.d("PlayerManager", "loadFolderAndPlay: SAF 模式, 扫描到 ${uriList.size} 个文件")
                     // 优先使用 targetUri 直接匹配，其次按文件名匹配
                     val startUri = (if (targetUri != null) {
@@ -391,47 +399,47 @@ class PlayerManager @Inject constructor(
                         playlistId = playlistId,
                         folderUri = folderUri
                     )
-                    return
+                    return@launch
                 }
                 Log.w("PlayerManager", "loadFolderAndPlay: SAF 扫描到 0 个文件, 降级到 File API")
             }
-        }
 
-        // 降级: 使用 File API 扫描
-        val files = scanAudioFiles(folderPath)
+            // 降级: 使用 File API 扫描 (在 IO 线程执行)
+            val files = withContext(Dispatchers.IO) {
+                scanAudioFiles(folderPath)
+            }
 
-        if (files.isEmpty()) {
-            Log.w("PlayerManager", "loadFolderAndPlay: File API 也扫描到 0 个文件, folderPath=$folderPath")
-            return
-        }
+            if (files.isEmpty()) {
+                Log.w("PlayerManager", "loadFolderAndPlay: File API 也扫描到 0 个文件, folderPath=$folderPath")
+                return@launch
+            }
 
-        _playlist.value = files
-        _uriPlaylist.value = emptyList() // 清除 URI 播放列表
-        _currentFolderPath.value = folderPath
-        _currentFolderUri.value = folderUri
-        _currentPlaylistId.value = playlistId
+            _playlist.value = files
+            _uriPlaylist.value = emptyList() // 清除 URI 播放列表
+            _currentFolderPath.value = folderPath
+            _currentFolderUri.value = folderUri
+            _currentPlaylistId.value = playlistId
 
-        val startIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
-        _currentIndex.value = startIndex
-        _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
-        _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
-        _currentFileName.value = files.getOrNull(startIndex)?.nameWithoutExtension
+            val startIndex = files.indexOfFirst { it.absolutePath == filePath }.coerceAtLeast(0)
+            _currentIndex.value = startIndex
+            _currentFilePath.value = files.getOrNull(startIndex)?.absolutePath
+            _currentDisplayName.value = files.getOrNull(startIndex)?.nameWithoutExtension
+            _currentFileName.value = files.getOrNull(startIndex)?.nameWithoutExtension
 
-        val mediaItems = files.map { file -> createMediaItem(file) }
+            val mediaItems = files.map { file -> createMediaItem(file) }
 
-        // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
-        ensureServiceStarted()
+            // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
+            ensureServiceStarted()
 
-        player.apply {
-            setMediaItems(mediaItems, startIndex, 0)
-            prepare()
-        }
+            player.apply {
+                setMediaItems(mediaItems, startIndex, 0)
+                prepare()
+            }
 
-        // 加载当前歌曲元信息
-        loadCurrentTrackMetadata(files.getOrNull(startIndex))
+            // 加载当前歌曲元信息
+            loadCurrentTrackMetadata(files.getOrNull(startIndex))
 
-        // 恢复上次播放位置
-        scope.launch {
+            // 恢复上次播放位置
             val memory = repository.getMemory(filePath)
             if (memory != null && memory.positionMs > 0) {
                 player.seekTo(startIndex, memory.positionMs)
