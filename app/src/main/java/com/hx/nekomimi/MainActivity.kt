@@ -233,22 +233,16 @@ fun MiniPlayerBar(
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (coverBitmap != null && !coverBitmap.isRecycled) {
-                        try {
-                            Image(
-                                bitmap = coverBitmap.asImageBitmap(),
-                                contentDescription = "封面",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        } catch (_: Exception) {
-                            Icon(
-                                Icons.Filled.MusicNote,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
+                    val imageBitmap = coverBitmap?.takeIf { !it.isRecycled }?.let {
+                        try { it.asImageBitmap() } catch (_: Exception) { null }
+                    }
+                    if (imageBitmap != null) {
+                        Image(
+                            bitmap = imageBitmap,
+                            contentDescription = "封面",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
                     } else {
                         Icon(
                             Icons.Filled.MusicNote,

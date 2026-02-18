@@ -270,22 +270,16 @@ fun MusicPlayerScreen(
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (currentCover != null && !currentCover!!.isRecycled) {
-                                        try {
-                                            Image(
-                                                bitmap = currentCover!!.asImageBitmap(),
-                                                contentDescription = "封面",
-                                                modifier = Modifier.fillMaxSize(),
-                                                contentScale = ContentScale.Crop
-                                            )
-                                        } catch (_: Exception) {
-                                            Icon(
-                                                Icons.Filled.MusicNote,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(80.dp),
-                                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                                            )
-                                        }
+                                    val coverImageBitmap = currentCover?.takeIf { !it.isRecycled }?.let {
+                                        try { it.asImageBitmap() } catch (_: Exception) { null }
+                                    }
+                                    if (coverImageBitmap != null) {
+                                        Image(
+                                            bitmap = coverImageBitmap,
+                                            contentDescription = "封面",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
                                     } else {
                                         Icon(
                                             Icons.Filled.MusicNote,
@@ -698,22 +692,21 @@ fun LibassLyricsView(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            val bitmap = displayBitmap
-            if (bitmap != null) {
-                try {
-                    if (!bitmap.isRecycled) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "ASS 字幕",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .wrapContentHeight(),
-                            contentScale = ContentScale.FillWidth
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e("LibassLyricsView", "显示字幕 Bitmap 失败", e)
+            val subtitleImageBitmap = displayBitmap?.takeIf { !it.isRecycled }?.let {
+                try { it.asImageBitmap() } catch (e: Exception) {
+                    Log.e("LibassLyricsView", "显示字幕 Bitmap 转换失败", e)
+                    null
                 }
+            }
+            if (subtitleImageBitmap != null) {
+                Image(
+                    bitmap = subtitleImageBitmap,
+                    contentDescription = "ASS 字幕",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight(),
+                    contentScale = ContentScale.FillWidth
+                )
             }
         }
     }
