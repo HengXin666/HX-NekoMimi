@@ -151,6 +151,13 @@ class PlaybackService : MediaSessionService() {
         val album = playerManager.currentAlbum.value
         val cover = playerManager.currentCover.value
 
+        // 安全复制 cover Bitmap，避免在后续操作中被其他线程并发回收导致崩溃
+        val coverCopy = try {
+            if (cover != null && !cover.isRecycled) cover.copy(Bitmap.Config.ARGB_8888, false) else null
+        } catch (e: Exception) {
+            null
+        }
+
         val metadataBuilder = MediaMetadata.Builder()
             .setTitle(displayName)
             .setDisplayTitle(displayName)
@@ -161,10 +168,10 @@ class PlaybackService : MediaSessionService() {
         if (album != null) {
             metadataBuilder.setAlbumTitle(album)
         }
-        if (cover != null && !cover.isRecycled) {
+        if (coverCopy != null && !coverCopy.isRecycled) {
             try {
                 metadataBuilder.setArtworkData(
-                    bitmapToByteArray(cover),
+                    bitmapToByteArray(coverCopy),
                     MediaMetadata.PICTURE_TYPE_FRONT_COVER
                 )
             } catch (_: Exception) { /* bitmap 可能在转换过程中被回收 */ }
@@ -176,7 +183,7 @@ class PlaybackService : MediaSessionService() {
         // 同步更新自定义通知提供者的元信息
         notificationProvider.title = displayName
         notificationProvider.artist = artist
-        notificationProvider.albumArt = if (cover != null && !cover.isRecycled) cover else null
+        notificationProvider.albumArt = coverCopy // 使用复制品，与原始 cover 解耦
 
         // 通知 MediaSession 刷新 (触发系统重新读取元信息并更新通知)
         try {

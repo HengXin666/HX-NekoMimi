@@ -656,11 +656,20 @@ class PlayerManager @Inject constructor(
                     }
                     _currentArtist.value = artist
                     _currentAlbum.value = album
+                    // 安全回收旧封面 Bitmap，防止内存泄漏
+                    val oldCover = _currentCover.value
                     _currentCover.value = cover
+                    if (oldCover != null && oldCover !== cover && !oldCover.isRecycled) {
+                        oldCover.recycle()
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
+                    val oldCover = _currentCover.value
                     _currentCover.value = null
+                    if (oldCover != null && !oldCover.isRecycled) {
+                        oldCover.recycle()
+                    }
                     _currentArtist.value = null
                     _currentAlbum.value = null
                 }
@@ -963,11 +972,20 @@ class PlayerManager @Inject constructor(
                     }
                     _currentArtist.value = artist
                     _currentAlbum.value = album
+                    // 安全回收旧封面 Bitmap，防止内存泄漏
+                    val oldCover = _currentCover.value
                     _currentCover.value = cover
+                    if (oldCover != null && oldCover !== cover && !oldCover.isRecycled) {
+                        oldCover.recycle()
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
+                    val oldCover = _currentCover.value
                     _currentCover.value = null
+                    if (oldCover != null && !oldCover.isRecycled) {
+                        oldCover.recycle()
+                    }
                     _currentArtist.value = null
                     _currentAlbum.value = null
                 }

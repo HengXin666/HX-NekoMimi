@@ -591,6 +591,8 @@ fun LibassLyricsView(
                 val renderer = AssRenderer()
                 // 使用 AtomicBoolean 确保跨线程可见性 (IO 线程写, Default 线程读)
                 val ready = java.util.concurrent.atomic.AtomicBoolean(false)
+                // 标记是否已被 dispose，防止导航离开后协程仍在渲染导致 JNI 崩溃
+                val disposed = java.util.concurrent.atomic.AtomicBoolean(false)
                 // 记录当前设置的帧尺寸，用于检测是否需要更新
                 var currentW = 0
                 var currentH = 0
@@ -603,11 +605,15 @@ fun LibassLyricsView(
         LaunchedEffect(Unit) {
             withContext(Dispatchers.IO) {
                 try {
+                    // 初始化前检查是否已 dispose (快速导航离开的情况)
+                    if (rendererHolder.disposed.get()) return@withContext
                     if (rendererHolder.renderer.init()) {
+                        if (rendererHolder.disposed.get()) return@withContext
                         rendererHolder.renderer.setFrameSize(currentScreenWidthPx, currentRenderHeight)
                         rendererHolder.currentW = currentScreenWidthPx
                         rendererHolder.currentH = currentRenderHeight
                         val loaded = rendererHolder.renderer.loadTrack(assContent)
+                        if (rendererHolder.disposed.get()) return@withContext
                         rendererHolder.ready.set(loaded)
                         isReady = loaded
                         if (loaded) {
@@ -628,9 +634,11 @@ fun LibassLyricsView(
         // 横竖屏切换时更新帧尺寸
         LaunchedEffect(screenWidthPx, renderHeight) {
             if (!isReady) return@LaunchedEffect
+            if (rendererHolder.disposed.get()) return@LaunchedEffect
             if (screenWidthPx != rendererHolder.currentW || renderHeight != rendererHolder.currentH) {
                 withContext(Dispatchers.IO) {
                     try {
+                        if (rendererHolder.disposed.get()) return@withContext
                         rendererHolder.renderer.setFrameSize(screenWidthPx, renderHeight)
                         rendererHolder.currentW = screenWidthPx
                         rendererHolder.currentH = renderHeight
@@ -648,38 +656,51 @@ fun LibassLyricsView(
         // 生命周期清理 (必须在 displayBitmap 声明之后，确保 onDispose 能访问到)
         DisposableEffect(Unit) {
             onDispose {
+                // 先标记 disposed，阻止所有正在进行的协程继续访问 renderer/bitmap
+                rendererHolder.disposed.set(true)
                 rendererHolder.ready.set(false)
                 rendererHolder.renderer.destroy()
                 // 回收最后一帧的显示 Bitmap，防止内存泄漏
                 val bmp = displayBitmap
                 displayBitmap = null
                 if (bmp != null && !bmp.isRecycled) {
-                    bmp.recycle()
+                    try { bmp.recycle() } catch (_: Exception) {}
                 }
             }
         }
 
         LaunchedEffect(positionMs, isReady, screenWidthPx, renderHeight) {
             if (!isReady || !rendererHolder.ready.get()) return@LaunchedEffect
+            // 检查是否已 dispose，避免导航离开后继续渲染
+            if (rendererHolder.disposed.get()) return@LaunchedEffect
             try {
                 val result = withContext(Dispatchers.Default) {
+                    // 在后台线程渲染前再次检查，防止 dispose 和渲染之间的竞态
+                    if (rendererHolder.disposed.get()) return@withContext null
                     rendererHolder.renderer.renderFrame(positionMs)
+                }
+                // 渲染完成后再次检查 (可能在 withContext 期间被 dispose)
+                if (rendererHolder.disposed.get()) {
+                    // 已 dispose，丢弃渲染结果，不再操作 displayBitmap
+                    return@LaunchedEffect
                 }
                 // 在主线程安全地更新 displayBitmap，避免竞态
                 if (result != null && !result.bitmap.isRecycled) {
                     // 复制一份 Bitmap 给 Compose 显示，原始的可以被后续渲染覆盖
-                    val copied = result.bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    val copied = try {
+                        result.bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    } catch (_: Exception) { null }
                     val oldBitmap = displayBitmap
                     displayBitmap = copied
                     // 回收旧的显示 Bitmap
                     if (oldBitmap != null && !oldBitmap.isRecycled) {
-                        oldBitmap.recycle()
+                        try { oldBitmap.recycle() } catch (_: Exception) {}
                     }
                 } else {
                     val oldBitmap = displayBitmap
                     displayBitmap = null
                     if (oldBitmap != null && !oldBitmap.isRecycled) {
-                        oldBitmap.recycle()
+                        try { oldBitmap.recycle() } catch (_: Exception) {}
                     }
                 }
             } catch (e: Exception) {
