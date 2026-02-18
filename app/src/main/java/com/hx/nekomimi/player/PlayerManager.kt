@@ -118,7 +118,7 @@ class PlayerManager @Inject constructor(
     val player: ExoPlayer
         get() = _player ?: createPlayer().also { _player = it }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var positionSaveJob: Job? = null
 
     // ==================== 播放状态 ====================
@@ -431,23 +431,32 @@ class PlayerManager @Inject constructor(
             // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
             ensureServiceStarted()
 
-            player.apply {
-                setMediaItems(mediaItems, startIndex, 0)
-                prepare()
+            try {
+                player.apply {
+                    setMediaItems(mediaItems, startIndex, 0)
+                    prepare()
+                }
+            } catch (e: Exception) {
+                Log.e("PlayerManager", "loadFolderAndPlay setMediaItems/prepare 异常: ${e.message}")
+                return@launch
             }
 
             // 加载当前歌曲元信息
             loadCurrentTrackMetadata(files.getOrNull(startIndex))
 
             // 恢复上次播放位置
-            val memory = repository.getMemory(filePath)
-            if (memory != null && memory.positionMs > 0) {
-                player.seekTo(startIndex, memory.positionMs)
-            }
-            player.play()
+            try {
+                val memory = repository.getMemory(filePath)
+                if (memory != null && memory.positionMs > 0) {
+                    _player?.seekTo(startIndex, memory.positionMs)
+                }
+                _player?.play()
 
-            // 更新歌单的最近播放时间
-            playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+                // 更新歌单的最近播放时间
+                playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+            } catch (e: Exception) {
+                Log.e("PlayerManager", "loadFolderAndPlay 恢复播放异常: ${e.message}")
+            }
         }
     }
 
@@ -473,9 +482,14 @@ class PlayerManager @Inject constructor(
         // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
         ensureServiceStarted()
 
-        player.apply {
-            setMediaItems(mediaItems, startIndex, 0)
-            prepare()
+        try {
+            player.apply {
+                setMediaItems(mediaItems, startIndex, 0)
+                prepare()
+            }
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "loadFilesAndPlay setMediaItems/prepare 异常: ${e.message}")
+            return
         }
 
         // 加载当前歌曲元信息
@@ -536,9 +550,14 @@ class PlayerManager @Inject constructor(
         // 启动前台服务 (确保通知栏/锁屏/导航栏控制可用)
         ensureServiceStarted()
 
-        player.apply {
-            setMediaItems(mediaItems, startIndex, 0)
-            prepare()
+        try {
+            player.apply {
+                setMediaItems(mediaItems, startIndex, 0)
+                prepare()
+            }
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "loadUrisAndPlay setMediaItems/prepare 异常: ${e.message}")
+            return
         }
 
         // 加载当前歌曲元信息 (从 URI)
@@ -666,7 +685,7 @@ class PlayerManager @Inject constructor(
             _currentDisplayName.value = files[index].nameWithoutExtension
             _currentFileName.value = files[index].nameWithoutExtension
 
-            player.seekTo(index, 0)
+            try { _player?.seekTo(index, 0) } catch (e: Exception) { Log.e("PlayerManager", "playAt seekTo 异常: ${e.message}") }
 
             // 加载当前歌曲元信息
             loadCurrentTrackMetadata(files[index])
@@ -700,7 +719,7 @@ class PlayerManager @Inject constructor(
             _currentDisplayName.value = fileNameNoExt
             _currentFileName.value = fileNameNoExt
 
-            player.seekTo(index, 0)
+            try { _player?.seekTo(index, 0) } catch (e: Exception) { Log.e("PlayerManager", "playAt URI seekTo 异常: ${e.message}") }
 
             // 加载当前歌曲元信息 (从 URI)
             loadCurrentTrackMetadataFromUri(context, uri)
@@ -723,23 +742,51 @@ class PlayerManager @Inject constructor(
     }
 
     fun play() {
-        ensureServiceStarted()
-        player.play()
+        try {
+            ensureServiceStarted()
+            player.play()
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "play() 异常: ${e.message}")
+        }
     }
-    fun pause() { player.pause() }
-    fun seekTo(positionMs: Long) { player.seekTo(positionMs) }
+
+    fun pause() {
+        try {
+            _player?.pause()
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "pause() 异常: ${e.message}")
+        }
+    }
+
+    fun seekTo(positionMs: Long) {
+        try {
+            _player?.seekTo(positionMs)
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "seekTo() 异常: ${e.message}")
+        }
+    }
 
     fun next() {
-        if (player.hasNextMediaItem()) {
-            saveCurrentPositionSync()
-            player.seekToNext()
+        try {
+            val p = _player ?: return
+            if (p.hasNextMediaItem()) {
+                saveCurrentPositionSync()
+                p.seekToNext()
+            }
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "next() 异常: ${e.message}")
         }
     }
 
     fun previous() {
-        if (player.hasPreviousMediaItem()) {
-            saveCurrentPositionSync()
-            player.seekToPrevious()
+        try {
+            val p = _player ?: return
+            if (p.hasPreviousMediaItem()) {
+                saveCurrentPositionSync()
+                p.seekToPrevious()
+            }
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "previous() 异常: ${e.message}")
         }
     }
 
@@ -858,24 +905,29 @@ class PlayerManager @Inject constructor(
      * 同时发出事件，让 UI 显示保存提示
      */
     suspend fun saveMemoryManually(): PlaybackRepository.MemorySaveResult? {
-        val filePath = _currentFilePath.value ?: return null
-        val pos = _player?.currentPosition?.coerceAtLeast(0) ?: return null
-        val dur = _player?.duration?.coerceAtLeast(0) ?: return null
-        val folder = _currentFolderPath.value ?: ""
-        val name = _currentDisplayName.value ?: ""
-        repository.saveMemory(filePath, pos, dur, folder, name)
+        return try {
+            val filePath = _currentFilePath.value ?: return null
+            val pos = _player?.currentPosition?.coerceAtLeast(0) ?: return null
+            val dur = _player?.duration?.coerceAtLeast(0) ?: return null
+            val folder = _currentFolderPath.value ?: ""
+            val name = _currentDisplayName.value ?: ""
+            repository.saveMemory(filePath, pos, dur, folder, name)
 
-        // 发出保存事件
-        _memorySaveEvent.tryEmit(
-            MemorySaveEvent(
-                filePath = filePath,
-                positionMs = pos,
-                displayName = name,
-                isAutoSave = false
+            // 发出保存事件
+            _memorySaveEvent.tryEmit(
+                MemorySaveEvent(
+                    filePath = filePath,
+                    positionMs = pos,
+                    displayName = name,
+                    isAutoSave = false
+                )
             )
-        )
 
-        return PlaybackRepository.MemorySaveResult(filePath, pos, dur, name)
+            PlaybackRepository.MemorySaveResult(filePath, pos, dur, name)
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "saveMemoryManually 异常: ${e.message}")
+            null
+        }
     }
 
     // ==================== 歌曲元信息加载 ====================
@@ -1368,11 +1420,17 @@ class PlayerManager @Inject constructor(
      * 释放播放器资源
      */
     fun release() {
-        saveCurrentPositionSync()
-        stopPositionTracking()
-        _player?.release()
-        _player = null
-        serviceStarted = false
-        scope.cancel()
+        try {
+            saveCurrentPositionSync()
+            stopPositionTracking()
+            _player?.release()
+            _player = null
+            serviceStarted = false
+            scope.cancel()
+            // 重新创建 scope，因为 PlayerManager 是 @Singleton，cancel 后需要新 scope 才能继续工作
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        } catch (e: Exception) {
+            Log.e("PlayerManager", "release() 异常: ${e.message}")
+        }
     }
 }

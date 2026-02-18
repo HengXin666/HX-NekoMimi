@@ -413,11 +413,11 @@ fun BookPlayerScreen(
                 }
 
                 // ========== 当前记忆信息卡片 ==========
-                if (currentMemory != null) {
+                currentMemory?.let { memory ->
                     MemoryInfoCard(
-                        memory = currentMemory!!,
+                        memory = memory,
                         currentPositionMs = positionMs,
-                        onClick = { viewModel.seekToMemory(currentMemory!!) }
+                        onClick = { viewModel.seekToMemory(memory) }
                     )
                 }
 

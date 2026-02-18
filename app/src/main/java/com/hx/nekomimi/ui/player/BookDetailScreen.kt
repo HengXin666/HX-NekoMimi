@@ -154,8 +154,8 @@ class BookDetailViewModel @Inject constructor(
             editDescription.value = existingBook.description
 
             // 加载最近播放记忆
-            if (existingBook.lastPlayedFilePath != null) {
-                lastMemory.value = repository.getMemory(existingBook.lastPlayedFilePath!!)
+            existingBook.lastPlayedFilePath?.let { filePath ->
+                lastMemory.value = repository.getMemory(filePath)
             }
 
             // 在 folderUri 加载完成后再加载文件夹内容 (确保 DocumentFile API 可用)
@@ -482,15 +482,15 @@ fun BookDetailScreen(
 
     // 删除音频文件确认对话框
     val deleteFileTarget by viewModel.showDeleteFileDialog.collectAsStateWithLifecycle()
-    if (deleteFileTarget != null) {
+    deleteFileTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { viewModel.showDeleteFileDialog.value = null },
             title = { Text("删除音频文件") },
-            text = { Text("确定要删除「${deleteFileTarget!!.name}」吗？\n\n⚠ 此操作将删除实际文件，不可恢复！") },
+            text = { Text("确定要删除「${target.name}」吗？\n\n⚠ 此操作将删除实际文件，不可恢复！") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteAudioFile(deleteFileTarget!!)
+                        viewModel.deleteAudioFile(target)
                         viewModel.showDeleteFileDialog.value = null
                     },
                     colors = ButtonDefaults.textButtonColors(

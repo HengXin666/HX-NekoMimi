@@ -98,15 +98,20 @@ class PlaybackService : MediaSessionService() {
      * 不再使用 replaceMediaItem，避免播放状态被打断导致通知消失
      */
     private fun startMetadataSync() {
+        // 统一的元信息更新调度方法，避免多个协程竞态写 metadataUpdateJob
+        fun scheduleMetadataUpdate(delayMs: Long = 100L) {
+            metadataUpdateJob?.cancel()
+            metadataUpdateJob = serviceScope.launch {
+                delay(delayMs)
+                updateMediaMetadata()
+            }
+        }
+
         // 监听当前文件路径变化 (切歌时)
         serviceScope.launch {
             playerManager.currentFilePath.collect { filePath ->
                 if (filePath != null) {
-                    metadataUpdateJob?.cancel()
-                    metadataUpdateJob = launch {
-                        delay(500) // 等待 PlayerManager 加载元信息
-                        updateMediaMetadata()
-                    }
+                    scheduleMetadataUpdate(500L) // 等待 PlayerManager 加载元信息
                 }
             }
         }
@@ -114,33 +119,21 @@ class PlaybackService : MediaSessionService() {
         // 监听封面变化 (元信息加载完毕后封面更新)
         serviceScope.launch {
             playerManager.currentCover.collect { _ ->
-                metadataUpdateJob?.cancel()
-                metadataUpdateJob = launch {
-                    delay(100)
-                    updateMediaMetadata()
-                }
+                scheduleMetadataUpdate()
             }
         }
 
         // 监听歌手变化
         serviceScope.launch {
             playerManager.currentArtist.collect { _ ->
-                metadataUpdateJob?.cancel()
-                metadataUpdateJob = launch {
-                    delay(100)
-                    updateMediaMetadata()
-                }
+                scheduleMetadataUpdate()
             }
         }
 
         // 监听显示名称变化
         serviceScope.launch {
             playerManager.currentDisplayName.collect { _ ->
-                metadataUpdateJob?.cancel()
-                metadataUpdateJob = launch {
-                    delay(100)
-                    updateMediaMetadata()
-                }
+                scheduleMetadataUpdate()
             }
         }
     }
@@ -168,11 +161,13 @@ class PlaybackService : MediaSessionService() {
         if (album != null) {
             metadataBuilder.setAlbumTitle(album)
         }
-        if (cover != null) {
-            metadataBuilder.setArtworkData(
-                bitmapToByteArray(cover),
-                MediaMetadata.PICTURE_TYPE_FRONT_COVER
-            )
+        if (cover != null && !cover.isRecycled) {
+            try {
+                metadataBuilder.setArtworkData(
+                    bitmapToByteArray(cover),
+                    MediaMetadata.PICTURE_TYPE_FRONT_COVER
+                )
+            } catch (_: Exception) { /* bitmap 可能在转换过程中被回收 */ }
         }
 
         // 更新 ForwardingPlayer 的覆写元数据
@@ -181,19 +176,29 @@ class PlaybackService : MediaSessionService() {
         // 同步更新自定义通知提供者的元信息
         notificationProvider.title = displayName
         notificationProvider.artist = artist
-        notificationProvider.albumArt = cover
+        notificationProvider.albumArt = if (cover != null && !cover.isRecycled) cover else null
 
         // 通知 MediaSession 刷新 (触发系统重新读取元信息并更新通知)
-        session.setPlayer(wrappedPlayer)
+        try {
+            session.setPlayer(wrappedPlayer)
+        } catch (e: Exception) {
+            // session 可能已释放
+            android.util.Log.e("PlaybackService", "setPlayer 异常: ${e.message}")
+        }
     }
 
     /**
      * Bitmap 转 ByteArray (用于 MediaMetadata 的封面)
      */
     private fun bitmapToByteArray(bitmap: Bitmap): ByteArray {
-        val stream = java.io.ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
-        return stream.toByteArray()
+        if (bitmap.isRecycled) return ByteArray(0)
+        return try {
+            val stream = java.io.ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+            stream.toByteArray()
+        } catch (e: Exception) {
+            ByteArray(0)
+        }
     }
 
     /**
@@ -201,26 +206,34 @@ class PlaybackService : MediaSessionService() {
      * 这是保存播放位置的最后时机
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        playerManager.saveCurrentPositionSync()
+        try {
+            playerManager.saveCurrentPositionSync()
 
-        val player = mediaSession?.player
-        if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
-            // 没在播放就停止服务
-            stopSelf()
+            val player = mediaSession?.player
+            if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
+                // 没在播放就停止服务
+                stopSelf()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PlaybackService", "onTaskRemoved 异常: ${e.message}")
         }
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        // 释放前保存位置
-        playerManager.saveCurrentPositionSync()
-        serviceScope.cancel()
-        metadataUpdateJob?.cancel()
-        mediaSession?.run {
-            // 注意: 不要在这里释放 player，player 由 PlayerManager 管理
-            release()
+        try {
+            // 释放前保存位置
+            playerManager.saveCurrentPositionSync()
+            serviceScope.cancel()
+            metadataUpdateJob?.cancel()
+            mediaSession?.run {
+                // 注意: 不要在这里释放 player，player 由 PlayerManager 管理
+                release()
+            }
+            mediaSession = null
+        } catch (e: Exception) {
+            android.util.Log.e("PlaybackService", "onDestroy 异常: ${e.message}")
         }
-        mediaSession = null
         super.onDestroy()
     }
 

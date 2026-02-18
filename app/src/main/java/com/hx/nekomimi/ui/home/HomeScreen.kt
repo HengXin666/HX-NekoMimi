@@ -398,15 +398,15 @@ private fun PlaylistListView(
     }
 
     // 删除确认对话框
-    if (deleteTarget != null) {
+    deleteTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { viewModel.showDeleteDialog.value = null },
             title = { Text("删除歌单") },
-            text = { Text("确定要删除「${deleteTarget!!.name}」吗？\n（不会删除实际音频文件）") },
+            text = { Text("确定要删除「${target.name}」吗？\n（不会删除实际音频文件）") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deletePlaylist(deleteTarget!!)
+                        viewModel.deletePlaylist(target)
                         viewModel.showDeleteDialog.value = null
                     },
                     colors = ButtonDefaults.textButtonColors(
@@ -625,15 +625,15 @@ private fun PlaylistDetailView(
 
     // 删除歌曲确认对话框
     val deleteTrackTarget by remember { viewModel.showDeleteTrackDialog }
-    if (deleteTrackTarget != null) {
+    deleteTrackTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { viewModel.showDeleteTrackDialog.value = null },
             title = { Text("删除歌曲") },
-            text = { Text("确定要删除「${deleteTrackTarget!!.title}」吗？\n\n⚠ 此操作将删除实际文件，不可恢复！") },
+            text = { Text("确定要删除「${target.title}」吗？\n\n⚠ 此操作将删除实际文件，不可恢复！") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.deleteTrack(deleteTrackTarget!!)
+                        viewModel.deleteTrack(target)
                         viewModel.showDeleteTrackDialog.value = null
                     },
                     colors = ButtonDefaults.textButtonColors(

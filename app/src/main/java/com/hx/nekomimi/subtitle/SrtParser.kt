@@ -30,7 +30,11 @@ object SrtParser {
      */
     fun parse(file: File): List<SubtitleCue> {
         if (!file.exists()) return emptyList()
-        return parse(file.readText())
+        return try {
+            parse(file.readText())
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     /**

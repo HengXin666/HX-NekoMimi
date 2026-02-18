@@ -42,51 +42,56 @@ object SubtitleManager {
      * @return 字幕加载结果
      */
     fun loadForAudio(audioFilePath: String): SubtitleResult {
-        val audioFile = File(audioFilePath)
-        val baseName = audioFile.nameWithoutExtension
-        val dir = audioFile.parentFile
+        try {
+            val audioFile = File(audioFilePath)
+            val baseName = audioFile.nameWithoutExtension
+            val dir = audioFile.parentFile
 
-        Log.d(TAG, "loadForAudio: audioPath=$audioFilePath, baseName=$baseName, dir=${dir?.absolutePath}")
+            Log.d(TAG, "loadForAudio: audioPath=$audioFilePath, baseName=$baseName, dir=${dir?.absolutePath}")
 
-        if (dir == null) {
-            Log.w(TAG, "loadForAudio: parent directory is null")
-            return SubtitleResult.None
-        }
+            if (dir == null) {
+                Log.w(TAG, "loadForAudio: parent directory is null")
+                return SubtitleResult.None
+            }
 
-        if (!dir.exists()) {
-            Log.w(TAG, "loadForAudio: directory does not exist: ${dir.absolutePath}")
-            return SubtitleResult.None
-        }
+            if (!dir.exists()) {
+                Log.w(TAG, "loadForAudio: directory does not exist: ${dir.absolutePath}")
+                return SubtitleResult.None
+            }
 
-        // 列出目录中所有字幕相关文件
-        val allFiles = dir.listFiles()?.map { it.name } ?: emptyList()
-        Log.d(TAG, "loadForAudio: files in dir: $allFiles")
+            // 列出目录中所有字幕相关文件
+            val allFiles = dir.listFiles()?.map { it.name } ?: emptyList()
+            Log.d(TAG, "loadForAudio: files in dir: $allFiles")
 
-        // 优先查找 ASS，再查找 SRT
-        for (ext in subtitleExtensions) {
-            val subtitleFile = File(dir, "$baseName.$ext")
-            Log.d(TAG, "loadForAudio: checking ${subtitleFile.absolutePath}, exists=${subtitleFile.exists()}, isFile=${subtitleFile.isFile}")
+            // 优先查找 ASS，再查找 SRT
+            for (ext in subtitleExtensions) {
+                val subtitleFile = File(dir, "$baseName.$ext")
+                Log.d(TAG, "loadForAudio: checking ${subtitleFile.absolutePath}, exists=${subtitleFile.exists()}, isFile=${subtitleFile.isFile}")
 
-            if (subtitleFile.exists() && subtitleFile.isFile) {
-                Log.i(TAG, "loadForAudio: found subtitle file: ${subtitleFile.absolutePath}")
-                return when (ext) {
-                    "ass", "ssa" -> {
-                        val rawContent = subtitleFile.readText()
-                        Log.i(TAG, "loadForAudio: found ASS file, size=${rawContent.length}")
-                        SubtitleResult.Ass(rawContent)
+                if (subtitleFile.exists() && subtitleFile.isFile) {
+                    Log.i(TAG, "loadForAudio: found subtitle file: ${subtitleFile.absolutePath}")
+                    return when (ext) {
+                        "ass", "ssa" -> {
+                            val rawContent = subtitleFile.readText()
+                            Log.i(TAG, "loadForAudio: found ASS file, size=${rawContent.length}")
+                            SubtitleResult.Ass(rawContent)
+                        }
+                        "srt" -> {
+                            val cues = SrtParser.parse(subtitleFile)
+                            Log.i(TAG, "loadForAudio: parsed SRT, cues=${cues.size}")
+                            SubtitleResult.Srt(cues)
+                        }
+                        else -> SubtitleResult.None
                     }
-                    "srt" -> {
-                        val cues = SrtParser.parse(subtitleFile)
-                        Log.i(TAG, "loadForAudio: parsed SRT, cues=${cues.size}")
-                        SubtitleResult.Srt(cues)
-                    }
-                    else -> SubtitleResult.None
                 }
             }
-        }
 
-        Log.w(TAG, "loadForAudio: no subtitle found for $baseName")
-        return SubtitleResult.None
+            Log.w(TAG, "loadForAudio: no subtitle found for $baseName")
+            return SubtitleResult.None
+        } catch (e: Exception) {
+            Log.e(TAG, "loadForAudio 异常: ${e.message}", e)
+            return SubtitleResult.None
+        }
     }
 
     /**
@@ -99,33 +104,38 @@ object SubtitleManager {
      * @return 字幕加载结果
      */
     fun loadForAudioFromUri(context: Context, folderUri: Uri, audioFileName: String): SubtitleResult {
-        val baseName = audioFileName.substringBeforeLast('.')
-        val treeDoc = DocumentFile.fromTreeUri(context, folderUri)
+        try {
+            val baseName = audioFileName.substringBeforeLast('.')
+            val treeDoc = DocumentFile.fromTreeUri(context, folderUri)
 
-        Log.d(TAG, "loadForAudioFromUri: folderUri=$folderUri, audioFileName=$audioFileName, baseName=$baseName")
+            Log.d(TAG, "loadForAudioFromUri: folderUri=$folderUri, audioFileName=$audioFileName, baseName=$baseName")
 
-        if (treeDoc == null) {
-            Log.w(TAG, "loadForAudioFromUri: treeDoc is null")
+            if (treeDoc == null) {
+                Log.w(TAG, "loadForAudioFromUri: treeDoc is null")
+                return SubtitleResult.None
+            }
+
+            // 先在根目录查找，再递归子文件夹
+            for (ext in subtitleExtensions) {
+                val subtitleName = "$baseName.$ext"
+                // 先搜根目录
+                val subtitleDoc = treeDoc.findFile(subtitleName)
+                    // 未找到则递归搜索子文件夹
+                    ?: findFileRecursive(treeDoc, subtitleName)
+                Log.d(TAG, "loadForAudioFromUri: checking $subtitleName, found=${subtitleDoc != null}")
+
+                if (subtitleDoc != null && subtitleDoc.isFile) {
+                    Log.i(TAG, "loadForAudioFromUri: found subtitle file: $subtitleName (uri=${subtitleDoc.uri})")
+                    return parseSubtitleDoc(context, ext, subtitleDoc)
+                }
+            }
+
+            Log.w(TAG, "loadForAudioFromUri: no subtitle found for $baseName")
+            return SubtitleResult.None
+        } catch (e: Exception) {
+            Log.e(TAG, "loadForAudioFromUri 异常: ${e.message}", e)
             return SubtitleResult.None
         }
-
-        // 先在根目录查找，再递归子文件夹
-        for (ext in subtitleExtensions) {
-            val subtitleName = "$baseName.$ext"
-            // 先搜根目录
-            val subtitleDoc = treeDoc.findFile(subtitleName)
-                // 未找到则递归搜索子文件夹
-                ?: findFileRecursive(treeDoc, subtitleName)
-            Log.d(TAG, "loadForAudioFromUri: checking $subtitleName, found=${subtitleDoc != null}")
-
-            if (subtitleDoc != null && subtitleDoc.isFile) {
-                Log.i(TAG, "loadForAudioFromUri: found subtitle file: $subtitleName (uri=${subtitleDoc.uri})")
-                return parseSubtitleDoc(context, ext, subtitleDoc)
-            }
-        }
-
-        Log.w(TAG, "loadForAudioFromUri: no subtitle found for $baseName")
-        return SubtitleResult.None
     }
 
     /**
@@ -154,19 +164,24 @@ object SubtitleManager {
      * 解析字幕文件 DocumentFile
      */
     private fun parseSubtitleDoc(context: Context, ext: String, subtitleDoc: DocumentFile): SubtitleResult {
-        return when (ext) {
-            "ass", "ssa" -> {
-                val rawContent = readUriContent(context, subtitleDoc.uri)
-                Log.i(TAG, "loadForAudioFromUri: found ASS file, size=${rawContent.length}")
-                SubtitleResult.Ass(rawContent)
+        return try {
+            when (ext) {
+                "ass", "ssa" -> {
+                    val rawContent = readUriContent(context, subtitleDoc.uri)
+                    Log.i(TAG, "loadForAudioFromUri: found ASS file, size=${rawContent.length}")
+                    SubtitleResult.Ass(rawContent)
+                }
+                "srt" -> {
+                    val content = readUriContent(context, subtitleDoc.uri)
+                    val cues = SrtParser.parse(content)
+                    Log.i(TAG, "loadForAudioFromUri: parsed SRT, cues=${cues.size}")
+                    SubtitleResult.Srt(cues)
+                }
+                else -> SubtitleResult.None
             }
-            "srt" -> {
-                val content = readUriContent(context, subtitleDoc.uri)
-                val cues = SrtParser.parse(content)
-                Log.i(TAG, "loadForAudioFromUri: parsed SRT, cues=${cues.size}")
-                SubtitleResult.Srt(cues)
-            }
-            else -> SubtitleResult.None
+        } catch (e: Exception) {
+            Log.e(TAG, "parseSubtitleDoc 异常: ${e.message}", e)
+            SubtitleResult.None
         }
     }
 
@@ -174,11 +189,16 @@ object SubtitleManager {
      * 从 URI 读取文件内容
      */
     private fun readUriContent(context: Context, uri: Uri): String {
-        return context.contentResolver.openInputStream(uri)?.use { inputStream ->
-            InputStreamReader(inputStream, "UTF-8").use { reader ->
-                reader.readText()
-            }
-        } ?: ""
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                InputStreamReader(inputStream, "UTF-8").use { reader ->
+                    reader.readText()
+                }
+            } ?: ""
+        } catch (e: Exception) {
+            Log.e(TAG, "readUriContent 异常: ${e.message}", e)
+            ""
+        }
     }
 
     /**

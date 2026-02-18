@@ -197,17 +197,16 @@ fun BookShelfScreen(
     var showActionMenu by remember { mutableStateOf<Book?>(null) }
 
     // 操作菜单对话框 (长按弹出)
-    if (showActionMenu != null) {
+    showActionMenu?.let { menuBook ->
         AlertDialog(
             onDismissRequest = { showActionMenu = null },
-            title = { Text("\uD83D\uDCD6 ${showActionMenu!!.title}") },
+            title = { Text("\uD83D\uDCD6 ${menuBook.title}") },
             text = {
                 Column {
                     TextButton(
                         onClick = {
-                            val b = showActionMenu!!
                             showActionMenu = null
-                            viewModel.refreshBookWithScan(context, b)
+                            viewModel.refreshBookWithScan(context, menuBook)
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -217,9 +216,8 @@ fun BookShelfScreen(
                     }
                     TextButton(
                         onClick = {
-                            val b = showActionMenu!!
                             showActionMenu = null
-                            bookToDelete = b
+                            bookToDelete = menuBook
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.textButtonColors(
@@ -415,12 +413,17 @@ fun BookCard(
 ) {
     val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
 
-    // 统计文件夹内音频数量
-    val audioCount = remember(book.folderPath) {
-        val dir = File(book.folderPath)
-        if (dir.exists() && dir.isDirectory) {
-            countAudioFiles(dir)
-        } else 0
+    // 统计文件夹内音频数量 (异步加载避免 ANR)
+    var audioCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(book.folderPath) {
+        audioCount = withContext(Dispatchers.IO) {
+            try {
+                val dir = File(book.folderPath)
+                if (dir.exists() && dir.isDirectory) {
+                    countAudioFiles(dir)
+                } else 0
+            } catch (_: Exception) { 0 }
+        }
     }
 
     Card(
