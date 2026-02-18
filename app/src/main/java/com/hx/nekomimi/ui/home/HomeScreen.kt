@@ -749,13 +749,24 @@ private fun TrackCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (cover != null) {
-            Image(
-                bitmap = cover.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
+        if (cover != null && !cover.isRecycled) {
+            try {
+                Image(
+                    bitmap = cover.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } catch (_: Exception) {
+                Icon(
+                    if (isCurrent && isPlaying) Icons.Filled.PlayCircle
+                    else Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    tint = if (isCurrent) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         } else {
             Icon(
                 if (isCurrent && isPlaying) Icons.Filled.PlayCircle

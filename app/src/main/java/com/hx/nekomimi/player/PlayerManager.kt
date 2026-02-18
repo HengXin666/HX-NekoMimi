@@ -483,14 +483,18 @@ class PlayerManager @Inject constructor(
 
         // 恢复上次播放位置
         scope.launch {
-            val memory = repository.getMemory(filePath)
-            if (memory != null && memory.positionMs > 0) {
-                player.seekTo(startIndex, memory.positionMs)
-            }
-            player.play()
+            try {
+                val memory = repository.getMemory(filePath)
+                if (memory != null && memory.positionMs > 0) {
+                    _player?.seekTo(startIndex, memory.positionMs)
+                }
+                _player?.play()
 
-            // 更新歌单的最近播放时间
-            playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+                // 更新歌单的最近播放时间
+                playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+            } catch (e: Exception) {
+                Log.e("PlayerManager", "loadFilesAndPlay 恢复播放异常: ${e.message}")
+            }
         }
     }
 
@@ -542,16 +546,20 @@ class PlayerManager @Inject constructor(
 
         // 恢复上次播放位置 (优先精确匹配，降级按文件名模糊匹配)
         scope.launch {
-            val memory = repository.getMemory(startUri.toString())
-                ?: repository.getMemoryByFileName(fileName) // 降级: 跨 File/URI 模式匹配
-            if (memory != null && memory.positionMs > 0) {
-                player.seekTo(startIndex, memory.positionMs)
-                Log.d("PlayerManager", "loadUrisAndPlay: 恢复记忆 pos=${memory.positionMs}, key=${memory.filePath}")
-            }
-            player.play()
+            try {
+                val memory = repository.getMemory(startUri.toString())
+                    ?: repository.getMemoryByFileName(fileName) // 降级: 跨 File/URI 模式匹配
+                if (memory != null && memory.positionMs > 0) {
+                    _player?.seekTo(startIndex, memory.positionMs)
+                    Log.d("PlayerManager", "loadUrisAndPlay: 恢复记忆 pos=${memory.positionMs}, key=${memory.filePath}")
+                }
+                _player?.play()
 
-            // 更新歌单的最近播放时间
-            playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+                // 更新歌单的最近播放时间
+                playlistId?.let { repository.updatePlaylistLastPlayed(it) }
+            } catch (e: Exception) {
+                Log.e("PlayerManager", "loadUrisAndPlay 恢复播放异常: ${e.message}")
+            }
         }
     }
 
@@ -665,11 +673,15 @@ class PlayerManager @Inject constructor(
 
             // 恢复该文件的播放位置
             scope.launch {
-                val memory = repository.getMemory(files[index].absolutePath)
-                if (memory != null && memory.positionMs > 0) {
-                    player.seekTo(index, memory.positionMs)
+                try {
+                    val memory = repository.getMemory(files[index].absolutePath)
+                    if (memory != null && memory.positionMs > 0) {
+                        _player?.seekTo(index, memory.positionMs)
+                    }
+                    _player?.play()
+                } catch (e: Exception) {
+                    Log.e("PlayerManager", "playAt(File) 恢复播放异常: ${e.message}")
                 }
-                player.play()
             }
             return
         }
@@ -695,13 +707,17 @@ class PlayerManager @Inject constructor(
 
             // 恢复该文件的播放位置 (优先精确匹配，降级按文件名模糊匹配)
             scope.launch {
-                val memory = repository.getMemory(uri.toString())
-                    ?: repository.getMemoryByFileName(fileName) // 降级: 跨 File/URI 模式匹配
-                if (memory != null && memory.positionMs > 0) {
-                    player.seekTo(index, memory.positionMs)
-                    Log.d("PlayerManager", "playAt(URI): 恢复记忆 pos=${memory.positionMs}, key=${memory.filePath}")
+                try {
+                    val memory = repository.getMemory(uri.toString())
+                        ?: repository.getMemoryByFileName(fileName) // 降级: 跨 File/URI 模式匹配
+                    if (memory != null && memory.positionMs > 0) {
+                        _player?.seekTo(index, memory.positionMs)
+                        Log.d("PlayerManager", "playAt(URI): 恢复记忆 pos=${memory.positionMs}, key=${memory.filePath}")
+                    }
+                    _player?.play()
+                } catch (e: Exception) {
+                    Log.e("PlayerManager", "playAt(URI) 恢复播放异常: ${e.message}")
                 }
-                player.play()
             }
         }
     }

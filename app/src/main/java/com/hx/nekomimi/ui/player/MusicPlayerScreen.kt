@@ -69,30 +69,46 @@ class MusicPlayerViewModel @Inject constructor(
         // 监听当前文件变化，自动加载字幕
         viewModelScope.launch {
             playerManager.currentFilePath.filterNotNull().distinctUntilChanged().collect { path ->
-                val folderUri = playerManager.currentFolderUri.value
-                val result = if (folderUri != null) {
-                    // 使用 URI 方式加载 (支持隐藏文件夹)
-                    // 注意: 使用 currentFileName (原始文件名) 而非 currentDisplayName (可能被元信息标题覆盖)
-                    val fileName = playerManager.currentFileName.value ?: return@collect
-                    SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
-                } else {
-                    // 使用文件路径方式加载
-                    SubtitleManager.loadForAudio(path)
-                }
-                subtitleResult.value = result
-                when (result) {
-                    is SubtitleManager.SubtitleResult.Ass -> {
-                        cues.value = emptyList() // ASS 完全由 libass 渲染，不需要解析 cues
-                        assRawContent.value = result.rawContent
+                try {
+                    // 字幕加载涉及文件IO操作，在IO线程执行防止ANR
+                    val result = withContext(Dispatchers.IO) {
+                        val folderUri = playerManager.currentFolderUri.value
+                        if (folderUri != null) {
+                            // 使用 URI 方式加载 (支持隐藏文件夹)
+                            // 注意: 使用 currentFileName (原始文件名) 而非 currentDisplayName (可能被元信息标题覆盖)
+                            val fileName = playerManager.currentFileName.value
+                                ?: return@withContext SubtitleManager.SubtitleResult.None
+                            SubtitleManager.loadForAudioFromUri(getApplication(), folderUri, fileName)
+                        } else {
+                            // 使用文件路径方式加载 (跳过非文件路径，如 URI 字符串)
+                            if (path.startsWith("content://") || path.startsWith("file://")) {
+                                SubtitleManager.SubtitleResult.None
+                            } else {
+                                SubtitleManager.loadForAudio(path)
+                            }
+                        }
                     }
-                    is SubtitleManager.SubtitleResult.Srt -> {
-                        cues.value = result.cues
-                        assRawContent.value = ""
+                    subtitleResult.value = result
+                    when (result) {
+                        is SubtitleManager.SubtitleResult.Ass -> {
+                            cues.value = emptyList() // ASS 完全由 libass 渲染，不需要解析 cues
+                            assRawContent.value = result.rawContent
+                        }
+                        is SubtitleManager.SubtitleResult.Srt -> {
+                            cues.value = result.cues
+                            assRawContent.value = ""
+                        }
+                        SubtitleManager.SubtitleResult.None -> {
+                            cues.value = emptyList()
+                            assRawContent.value = ""
+                        }
                     }
-                    SubtitleManager.SubtitleResult.None -> {
-                        cues.value = emptyList()
-                        assRawContent.value = ""
-                    }
+                } catch (e: Exception) {
+                    // 字幕加载失败不应导致闪退，静默降级为无字幕
+                    Log.e("MusicPlayerVM", "字幕加载异常: ${e.message}", e)
+                    subtitleResult.value = SubtitleManager.SubtitleResult.None
+                    cues.value = emptyList()
+                    assRawContent.value = ""
                 }
             }
         }
@@ -254,13 +270,22 @@ fun MusicPlayerScreen(
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (currentCover != null) {
-                                        Image(
-                                            bitmap = currentCover!!.asImageBitmap(),
-                                            contentDescription = "封面",
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = ContentScale.Crop
-                                        )
+                                    if (currentCover != null && !currentCover!!.isRecycled) {
+                                        try {
+                                            Image(
+                                                bitmap = currentCover!!.asImageBitmap(),
+                                                contentDescription = "封面",
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } catch (_: Exception) {
+                                            Icon(
+                                                Icons.Filled.MusicNote,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(80.dp),
+                                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                            )
+                                        }
                                     } else {
                                         Icon(
                                             Icons.Filled.MusicNote,
@@ -642,28 +667,29 @@ fun LibassLyricsView(
 
         LaunchedEffect(positionMs, isReady, screenWidthPx, renderHeight) {
             if (!isReady || !rendererHolder.ready.get()) return@LaunchedEffect
-            withContext(Dispatchers.Default) {
-                try {
-                    val result = rendererHolder.renderer.renderFrame(positionMs)
-                    if (result != null && !result.bitmap.isRecycled) {
-                        // 复制一份 Bitmap 给 Compose 显示，原始的可以被后续渲染覆盖
-                        val copied = result.bitmap.copy(Bitmap.Config.ARGB_8888, false)
-                        val oldBitmap = displayBitmap
-                        displayBitmap = copied
-                        // 回收旧的显示 Bitmap
-                        if (oldBitmap != null && !oldBitmap.isRecycled) {
-                            oldBitmap.recycle()
-                        }
-                    } else {
-                        val oldBitmap = displayBitmap
-                        displayBitmap = null
-                        if (oldBitmap != null && !oldBitmap.isRecycled) {
-                            oldBitmap.recycle()
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("LibassLyricsView", "渲染帧失败", e)
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    rendererHolder.renderer.renderFrame(positionMs)
                 }
+                // 在主线程安全地更新 displayBitmap，避免竞态
+                if (result != null && !result.bitmap.isRecycled) {
+                    // 复制一份 Bitmap 给 Compose 显示，原始的可以被后续渲染覆盖
+                    val copied = result.bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    val oldBitmap = displayBitmap
+                    displayBitmap = copied
+                    // 回收旧的显示 Bitmap
+                    if (oldBitmap != null && !oldBitmap.isRecycled) {
+                        oldBitmap.recycle()
+                    }
+                } else {
+                    val oldBitmap = displayBitmap
+                    displayBitmap = null
+                    if (oldBitmap != null && !oldBitmap.isRecycled) {
+                        oldBitmap.recycle()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("LibassLyricsView", "渲染帧失败", e)
             }
         }
 
@@ -673,15 +699,21 @@ fun LibassLyricsView(
             contentAlignment = Alignment.Center
         ) {
             val bitmap = displayBitmap
-            if (bitmap != null && !bitmap.isRecycled) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "ASS 字幕",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight(),
-                    contentScale = ContentScale.FillWidth
-                )
+            if (bitmap != null) {
+                try {
+                    if (!bitmap.isRecycled) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "ASS 字幕",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight(),
+                            contentScale = ContentScale.FillWidth
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e("LibassLyricsView", "显示字幕 Bitmap 失败", e)
+                }
             }
         }
     }
