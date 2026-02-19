@@ -1,23 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NekoMimi</string>
-    <string name="nav_home">主页</string>
-    <string name="nav_music">音乐</string>
-    <string name="nav_audiobook">听书</string>
-    <string name="nav_bookmarks">书签</string>
     <string name="select_folder">选择文件夹</string>
     <string name="no_audio_files">未找到音频文件</string>
     <string name="playing">正在播放</string>
     <string name="paused">已暂停</string>
-    <string name="bookmark_added">书签已添加</string>
-    <string name="bookmark_deleted">书签已删除</string>
     <string name="position_saved">播放位置已记忆</string>
     <string name="notification_channel_playback">播放控制</string>
     <string name="notification_channel_playback_desc">音频播放通知和控制</string>
     <string name="notification_default_title">NekoMimi</string>
     <string name="notification_play">播放</string>
     <string name="notification_pause">暂停</string>
-    <string name="notification_next">下一首</string>
-    <string name="notification_previous">上一首</string>
+    <string name="notification_next">下一章</string>
+    <string name="notification_previous">上一章</string>
     <string name="notification_stop">停止</string>
 </resources>

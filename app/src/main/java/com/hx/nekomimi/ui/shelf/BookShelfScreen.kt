@@ -3,509 +3,235 @@ package com.hx.nekomimi.ui.shelf
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
 import com.hx.nekomimi.data.db.entity.Book
 import com.hx.nekomimi.data.repository.PlaybackRepository
-import com.hx.nekomimi.player.FolderScanResult
-import com.hx.nekomimi.player.PlayerManager
-import com.hx.nekomimi.ui.home.ScanResultDialog
-import com.hx.nekomimi.ui.home.getPathFromUri
-import com.hx.nekomimi.ui.player.formatTimeLong
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
-import javax.inject.Inject
 
 /**
- * 排序方式
- */
-enum class BookSortOrder {
-    /** 按导入日期 */
-    IMPORT_DATE,
-    /** 按最近更新 */
-    LAST_UPDATED
-}
-
-@HiltViewModel
-class BookShelfViewModel @Inject constructor(
-    private val repository: PlaybackRepository,
-    private val playerManager: PlayerManager
-) : ViewModel() {
-
-    private val _sortOrder = MutableStateFlow(BookSortOrder.LAST_UPDATED)
-    val sortOrder: StateFlow<BookSortOrder> = _sortOrder.asStateFlow()
-
-    /** 按排序方式获取书列表 */
-    val books: StateFlow<List<Book>> = _sortOrder
-        .flatMapLatest { order ->
-            when (order) {
-                BookSortOrder.IMPORT_DATE -> repository.getAllBooksByImportDate()
-                BookSortOrder.LAST_UPDATED -> repository.getAllBooksByLastUpdated()
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val toastMessage = MutableStateFlow<String?>(null)
-
-    /** 扫描结果弹窗 */
-    private val _scanResult = MutableStateFlow<FolderScanResult?>(null)
-    val scanResult: StateFlow<FolderScanResult?> = _scanResult.asStateFlow()
-
-    /** 是否正在扫描 */
-    private val _isScanning = MutableStateFlow(false)
-    val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
-
-    fun dismissScanResult() { _scanResult.value = null }
-
-    fun setSortOrder(order: BookSortOrder) {
-        _sortOrder.value = order
-    }
-
-    /** 导入一本书 (文件夹) - 先扫描显示结果，再保存 */
-    fun importBook(context: android.content.Context, folderPath: String, folderUri: Uri? = null) {
-        viewModelScope.launch {
-            _isScanning.value = true
-            val result = withContext(Dispatchers.IO) {
-                // 优先使用 URI 扫描 (解决隐藏文件夹无法用 File API 访问的问题)
-                if (folderUri != null) {
-                    playerManager.scanFolderWithResult(context, folderUri)
-                } else {
-                    playerManager.scanFolderWithResult(folderPath)
-                }
-            }
-            _scanResult.value = result
-            _isScanning.value = false
-
-            // 保存到数据库
-            val book = repository.importBook(folderPath, folderUri?.toString())
-            toastMessage.value = "已导入: ${book.title} (${result.doneCount} 个音频)"
-        }
-    }
-
-    /** 刷新一本书: 重新递归扫描并显示扫描结果弹窗 */
-    fun refreshBookWithScan(context: android.content.Context, book: Book) {
-        viewModelScope.launch {
-            _isScanning.value = true
-            val result = withContext(Dispatchers.IO) {
-                // 优先使用 URI 扫描 (解决隐藏文件夹无法用 File API 访问的问题)
-                if (book.folderUri != null) {
-                    val uri = Uri.parse(book.folderUri)
-                    playerManager.scanFolderWithResult(context, uri)
-                } else {
-                    playerManager.scanFolderWithResult(book.folderPath)
-                }
-            }
-            _scanResult.value = result
-            _isScanning.value = false
-            toastMessage.value = "${book.title}: 扫描完成 (${result.doneCount} 个音频)"
-        }
-    }
-
-    /** 删除书 */
-    fun deleteBook(book: Book) {
-        viewModelScope.launch {
-            try {
-                repository.deleteBook(book.id)
-                toastMessage.value = "已移除: ${book.title}"
-            } catch (e: Exception) {
-                android.util.Log.e("BookShelfVM", "删除书失败: ${book.title}", e)
-                toastMessage.value = "删除失败: ${e.message}"
-            }
-        }
-    }
-
-    fun clearToast() { toastMessage.value = null }
-}
-
-/**
- * 听书根页面 - 书架
- * 显示所有导入的有声书，支持按导入日期/最近更新排序
+ * 书架主界面
+ *
+ * 原型架构:
+ * [打开] -> 主界面: 显示封面 or 书籍名称卡片
+ *         -> 添加书籍: 选择文件(夹) -> 递归扫描 mp3
+ *         -> 删除书籍
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookShelfScreen(
-    onNavigateToBookDetail: (String) -> Unit = {},
-    viewModel: BookShelfViewModel = hiltViewModel()
+    repository: PlaybackRepository,
+    onBookClick: (Long) -> Unit
 ) {
     val context = LocalContext.current
-    val books by viewModel.books.collectAsStateWithLifecycle()
-    val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
-    val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
 
-    // Snackbar
-    val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(toastMessage) {
-        toastMessage?.let {
-            snackbarHostState.showSnackbar(it, duration = SnackbarDuration.Short)
-            viewModel.clearToast()
-        }
-    }
+    // 书籍列表 (按最近更新排序)
+    val books by repository.getAllBooksByLastUpdated().collectAsState(initial = emptyList())
 
-    // 文件夹选择器 (导入新书)
+    // 待删除确认的书
+    var bookToDelete by remember { mutableStateOf<Book?>(null) }
+
+    // SAF 文件夹选择器
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
-        uri?.let {
-            // 持久化 URI 权限，以便后续访问 (和音乐导入保持一致)
-            val contentResolver = context.contentResolver
-            contentResolver.takePersistableUriPermission(
-                it,
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
-            
-            val path = getPathFromUri(context, it)
-            if (path != null) {
-                viewModel.importBook(context, path, it)
-            } else {
-                // 无法解析路径，直接使用 URI 作为标识
-                viewModel.importBook(context, it.toString(), it)
-            }
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        // 持久化 URI 权限
+        val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        try {
+            context.contentResolver.takePersistableUriPermission(uri, flags)
+        } catch (_: Exception) {}
+
+        // 从 SAF URI 提取文件夹路径
+        val folderPath = extractFolderPath(uri)
+
+        scope.launch {
+            repository.importBook(folderPath, folderUri = uri.toString())
         }
-    }
-
-    // 长按操作确认对话框
-    var bookToDelete by remember { mutableStateOf<Book?>(null) }
-    var bookToRefresh by remember { mutableStateOf<Book?>(null) }
-    var showActionMenu by remember { mutableStateOf<Book?>(null) }
-
-    // 操作菜单对话框 (长按弹出)
-    showActionMenu?.let { menuBook ->
-        AlertDialog(
-            onDismissRequest = { showActionMenu = null },
-            title = { Text("\uD83D\uDCD6 ${menuBook.title}") },
-            text = {
-                Column {
-                    TextButton(
-                        onClick = {
-                            showActionMenu = null
-                            viewModel.refreshBookWithScan(context, menuBook)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("刷新扫描")
-                    }
-                    TextButton(
-                        onClick = {
-                            showActionMenu = null
-                            bookToDelete = menuBook
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Filled.Delete, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("移除有声书")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showActionMenu = null }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
-
-    bookToDelete?.let { targetBook ->
-        AlertDialog(
-            onDismissRequest = { bookToDelete = null },
-            title = { Text("移除有声书") },
-            text = { Text("确定要从书架移除「${targetBook.title}」吗？\n（不会删除实际文件）") },
-            confirmButton = {
-                TextButton(onClick = {
-                    bookToDelete = null
-                    viewModel.deleteBook(targetBook)
-                }) {
-                    Text("移除", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { bookToDelete = null }) {
-                    Text("取消")
-                }
-            }
-        )
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("📚 书架")
-                        Text(
-                            "${books.size} 本有声书",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = "🐱 NekoMimi 书架",
+                        fontWeight = FontWeight.Bold
+                    )
                 },
                 actions = {
-                    // 排序按钮
-                    var showSortMenu by remember { mutableStateOf(false) }
-                    IconButton(onClick = { showSortMenu = true }) {
-                        Icon(Icons.Filled.Sort, contentDescription = "排序")
-                    }
-                    DropdownMenu(
-                        expanded = showSortMenu,
-                        onDismissRequest = { showSortMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (sortOrder == BookSortOrder.LAST_UPDATED) {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                    }
-                                    Text("最近更新")
-                                }
-                            },
-                            onClick = {
-                                viewModel.setSortOrder(BookSortOrder.LAST_UPDATED)
-                                showSortMenu = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (sortOrder == BookSortOrder.IMPORT_DATE) {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                    }
-                                    Text("导入日期")
-                                }
-                            },
-                            onClick = {
-                                viewModel.setSortOrder(BookSortOrder.IMPORT_DATE)
-                                showSortMenu = false
-                            }
-                        )
-                    }
-
-                    // 导入按钮
+                    // 添加书籍按钮
                     IconButton(onClick = { folderPicker.launch(null) }) {
-                        Icon(Icons.Filled.Add, contentDescription = "导入有声书")
+                        Icon(Icons.Default.Add, contentDescription = "添加书籍")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { padding ->
+        }
+    ) { paddingValues ->
         if (books.isEmpty()) {
-            // 空书架引导页
+            // 空状态
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(paddingValues),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        Icons.Filled.MenuBook,
+                        Icons.Default.MenuBook,
                         contentDescription = null,
                         modifier = Modifier.size(80.dp),
                         tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        "书架空空如也",
+                        "书架是空的",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "点击右上角 + 导入有声书文件夹",
+                        "点击右上角 + 添加有声书文件夹",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                     )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    FilledTonalButton(onClick = { folderPicker.launch(null) }) {
-                        Icon(Icons.Filled.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("导入有声书")
-                    }
                 }
             }
         } else {
-            // 书架网格
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+            // 书籍卡片列表
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(paddingValues),
+                contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(books, key = { it.id }) { book ->
                     BookCard(
                         book = book,
-                        onClick = { onNavigateToBookDetail(book.folderPath) },
-                        onLongClick = { showActionMenu = book }
+                        onClick = { onBookClick(book.id) },
+                        onDeleteClick = { bookToDelete = book }
                     )
                 }
             }
         }
-
     }
 
-    // 扫描结果弹窗 (必须放在 Scaffold 外部，确保 Dialog 不受 Scaffold content 区域约束)
-    val scanResult by viewModel.scanResult.collectAsStateWithLifecycle()
-    val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
-    ScanResultDialog(
-        scanResult = scanResult,
-        isScanning = isScanning,
-        onDismiss = { viewModel.dismissScanResult() }
-    )
+    // 删除确认对话框
+    if (bookToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { bookToDelete = null },
+            title = { Text("删除书籍") },
+            text = { Text("确定要删除「${bookToDelete!!.title}」吗？\n（不会删除实际文件）") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            repository.deleteBook(bookToDelete!!.id)
+                            bookToDelete = null
+                        }
+                    }
+                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { bookToDelete = null }) { Text("取消") }
+            }
+        )
+    }
 }
 
 /**
- * 书卡片
+ * 书籍卡片
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun BookCard(
+private fun BookCard(
     book: Book,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onDeleteClick: () -> Unit
 ) {
-    val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
-
-    // 统计文件夹内音频数量 (异步加载避免 ANR)
-    var audioCount by remember { mutableIntStateOf(0) }
-    LaunchedEffect(book.folderPath) {
-        audioCount = withContext(Dispatchers.IO) {
-            try {
-                val dir = File(book.folderPath)
-                if (dir.exists() && dir.isDirectory) {
-                    countAudioFiles(dir)
-                } else 0
-            } catch (_: Exception) { 0 }
-        }
-    }
-
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.78f)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            ),
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),
-        shape = RoundedCornerShape(16.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // 上半部分 - 书名和图标
-            Column {
-                // 书图标
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1.2f)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.MenuBook,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                    )
-                }
+            // 书籍图标
+            Icon(
+                Icons.Default.MenuBook,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
 
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.width(16.dp))
 
-                // 书名
+            // 书籍信息
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = book.title,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-            }
-
-            // 下半部分 - 信息
-            Column {
-                // 音频数量
-                Text(
-                    text = "$audioCount 个音频",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // 上次播放信息
                 if (book.lastPlayedDisplayName != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "▶ ${book.lastPlayedDisplayName}",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "📍 ${book.lastPlayedDisplayName}",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
+                if (book.description.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = formatTimeLong(book.lastPlayedPositionMs),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                        text = book.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
 
-                // 更新时间
-                Text(
-                    text = dateFormat.format(Date(book.lastUpdatedAt)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            // 删除按钮
+            IconButton(onClick = onDeleteClick) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除",
+                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
                 )
             }
         }
@@ -513,23 +239,16 @@ fun BookCard(
 }
 
 /**
- * 递归统计文件夹内所有音频文件数量
+ * 从 SAF URI 提取文件夹路径
  */
-private val AUDIO_EXTS = setOf(
-    "mp3", "wav", "m4a", "ogg", "flac", "aac", "wma", "opus", "ape", "alac",
-    // B站缓存格式 (DASH 分段音视频)
-    "m4s",
-    "mp4", "mkv", "webm", "avi", "mov", "ts", "3gp"
-)
-
-private fun countAudioFiles(dir: File): Int {
-    var count = 0
-    dir.listFiles()?.forEach { file ->
-        if (file.isFile && file.extension.lowercase() in AUDIO_EXTS) {
-            count++
-        } else if (file.isDirectory) {
-            count += countAudioFiles(file)
-        }
+private fun extractFolderPath(uri: Uri): String {
+    val path = uri.lastPathSegment ?: return uri.toString()
+    // SAF URI lastPathSegment 格式: "primary:Download/MyBooks"
+    return if (path.contains(':')) {
+        val parts = path.split(':')
+        val storage = if (parts[0] == "primary") "/storage/emulated/0" else "/storage/${parts[0]}"
+        if (parts.size > 1 && parts[1].isNotEmpty()) "$storage/${parts[1]}" else storage
+    } else {
+        path
     }
-    return count
 }

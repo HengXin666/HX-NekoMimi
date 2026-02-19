@@ -5,8 +5,6 @@ import android.content.SharedPreferences
 import androidx.room.Room
 import com.hx.nekomimi.data.db.AppDatabase
 import com.hx.nekomimi.data.db.dao.BookDao
-import com.hx.nekomimi.data.db.dao.BookmarkDao
-import com.hx.nekomimi.data.db.dao.MusicPlaylistDao
 import com.hx.nekomimi.data.db.dao.PlaybackMemoryDao
 import dagger.Module
 import dagger.Provides
@@ -32,20 +30,12 @@ object AppModule {
     }
 
     @Provides
-    fun providePlaybackMemoryDao(db: AppDatabase): PlaybackMemoryDao =
-        db.playbackMemoryDao()
-
-    @Provides
-    fun provideBookmarkDao(db: AppDatabase): BookmarkDao =
-        db.bookmarkDao()
-
-    @Provides
     fun provideBookDao(db: AppDatabase): BookDao =
         db.bookDao()
 
     @Provides
-    fun provideMusicPlaylistDao(db: AppDatabase): MusicPlaylistDao =
-        db.musicPlaylistDao()
+    fun providePlaybackMemoryDao(db: AppDatabase): PlaybackMemoryDao =
+        db.playbackMemoryDao()
 
     @Provides
     @Singleton

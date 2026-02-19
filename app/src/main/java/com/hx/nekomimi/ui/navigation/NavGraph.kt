@@ -6,86 +6,69 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.hx.nekomimi.ui.bookmark.BookmarkScreen
-import com.hx.nekomimi.ui.home.MusicHomeScreen
+import com.hx.nekomimi.player.PlayerManager
+import com.hx.nekomimi.data.repository.PlaybackRepository
+import com.hx.nekomimi.ui.shelf.BookShelfScreen
 import com.hx.nekomimi.ui.player.BookDetailScreen
 import com.hx.nekomimi.ui.player.BookPlayerScreen
-import com.hx.nekomimi.ui.player.MusicPlayerScreen
-import com.hx.nekomimi.ui.shelf.BookShelfScreen
 
+/**
+ * 导航图
+ * 书架(主页) → 书详情 → 播放页
+ */
 @Composable
-fun NavGraph(navController: NavHostController) {
+fun NavGraph(
+    navController: NavHostController,
+    playerManager: PlayerManager,
+    repository: PlaybackRepository
+) {
     NavHost(
         navController = navController,
-        startDestination = Screen.MusicHome.route
+        startDestination = Screen.BookShelf.route
     ) {
-        // ========== 音乐 Tab ==========
-        composable(Screen.MusicHome.route) {
-            MusicHomeScreen(
-                onNavigateToPlayer = {
-                    navController.navigate(Screen.MusicPlayer.route) {
-                        launchSingleTop = true
-                    }
-                }
-            )
-        }
-        composable(Screen.MusicPlayer.route) {
-            MusicPlayerScreen(
-                onNavigateBack = {
-                    navController.popBackStack()
-                }
-            )
-        }
-
-        // ========== 听书 Tab ==========
+        // 书架 (主界面)
         composable(Screen.BookShelf.route) {
             BookShelfScreen(
-                onNavigateToBookDetail = { folderPath ->
-                    navController.navigate(Screen.BookDetail.createRoute(folderPath)) {
-                        launchSingleTop = true
-                    }
-                }
-            )
-        }
-        composable(
-            route = Screen.BookDetail.route,
-            arguments = listOf(
-                navArgument("bookFolderPath") { type = NavType.StringType }
-            )
-        ) { backStackEntry ->
-            val encodedPath = backStackEntry.arguments?.getString("bookFolderPath") ?: ""
-            val folderPath = java.net.URLDecoder.decode(encodedPath, "UTF-8")
-            BookDetailScreen(
-                folderPath = folderPath,
-                onNavigateToPlayer = {
-                    navController.navigate(Screen.BookPlayer.route) {
-                        launchSingleTop = true
-                    }
-                },
-                onNavigateToBookmarks = {
-                    navController.navigate(Screen.Bookmarks.route) {
-                        launchSingleTop = true
-                    }
-                },
-                onNavigateBack = {
-                    navController.popBackStack()
-                }
-            )
-        }
-        composable(Screen.BookPlayer.route) {
-            BookPlayerScreen(
-                onNavigateBack = {
-                    navController.popBackStack()
+                repository = repository,
+                onBookClick = { bookId ->
+                    navController.navigate(Screen.BookDetail.createRoute(bookId))
                 }
             )
         }
 
-        // ========== 书签 ==========
-        composable(Screen.Bookmarks.route) {
-            BookmarkScreen(
-                onNavigateBack = {
-                    navController.popBackStack()
+        // 书详情页
+        composable(
+            route = Screen.BookDetail.route,
+            arguments = listOf(navArgument("bookId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val bookId = backStackEntry.arguments?.getLong("bookId") ?: return@composable
+            BookDetailScreen(
+                bookId = bookId,
+                repository = repository,
+                playerManager = playerManager,
+                onNavigateBack = { navController.popBackStack() },
+                onPlayChapter = { bId, chapterIndex ->
+                    navController.navigate(Screen.BookPlayer.createRoute(bId, chapterIndex))
                 }
+            )
+        }
+
+        // 播放页
+        composable(
+            route = Screen.BookPlayer.route,
+            arguments = listOf(
+                navArgument("bookId") { type = NavType.LongType },
+                navArgument("chapterIndex") { type = NavType.IntType }
+            )
+        ) { backStackEntry ->
+            val bookId = backStackEntry.arguments?.getLong("bookId") ?: return@composable
+            val chapterIndex = backStackEntry.arguments?.getInt("chapterIndex") ?: return@composable
+            BookPlayerScreen(
+                bookId = bookId,
+                chapterIndex = chapterIndex,
+                repository = repository,
+                playerManager = playerManager,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

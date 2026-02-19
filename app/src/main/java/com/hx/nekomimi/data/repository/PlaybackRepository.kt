@@ -2,12 +2,8 @@ package com.hx.nekomimi.data.repository
 
 import android.content.SharedPreferences
 import com.hx.nekomimi.data.db.dao.BookDao
-import com.hx.nekomimi.data.db.dao.BookmarkDao
-import com.hx.nekomimi.data.db.dao.MusicPlaylistDao
 import com.hx.nekomimi.data.db.dao.PlaybackMemoryDao
 import com.hx.nekomimi.data.db.entity.Book
-import com.hx.nekomimi.data.db.entity.Bookmark
-import com.hx.nekomimi.data.db.entity.MusicPlaylist
 import com.hx.nekomimi.data.db.entity.PlaybackMemory
 import kotlinx.coroutines.flow.Flow
 import java.io.File
@@ -15,16 +11,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 播放数据仓库
- * 统一管理播放记忆、书签、有声书的数据访问
+ * 数据仓库
+ * 统一管理有声书和播放记忆的数据访问
  * 使用 SharedPreferences 作为紧急快照 (进程被杀时的最后防线)
  */
 @Singleton
 class PlaybackRepository @Inject constructor(
-    private val memoryDao: PlaybackMemoryDao,
-    private val bookmarkDao: BookmarkDao,
     private val bookDao: BookDao,
-    private val musicPlaylistDao: MusicPlaylistDao,
+    private val memoryDao: PlaybackMemoryDao,
     private val prefs: SharedPreferences
 ) {
     companion object {
@@ -82,7 +76,7 @@ class PlaybackRepository @Inject constructor(
             .putString(KEY_LAST_FOLDER, folderPath)
             .putString(KEY_LAST_DISPLAY_NAME, displayName)
             .putLong(KEY_LAST_SAVED_AT, savedAt)
-            .apply() // apply() 是异步的但会在进程退出前刷盘
+            .apply()
     }
 
     /**
@@ -106,7 +100,6 @@ class PlaybackRepository @Inject constructor(
 
     /**
      * 按文件名模糊匹配播放记忆 (降级方案)
-     * 当用精确 key 找不到记忆时，尝试按文件名匹配
      * 用于跨 File/URI 模式的记忆恢复
      */
     suspend fun getMemoryByFileName(fileName: String): PlaybackMemory? =
@@ -124,50 +117,6 @@ class PlaybackRepository @Inject constructor(
     fun getMemoriesByFolder(folderPath: String): Flow<List<PlaybackMemory>> =
         memoryDao.getByFolder(folderPath)
 
-    // ==================== 书签 ====================
-
-    /** 添加书签 */
-    suspend fun addBookmark(
-        filePath: String,
-        positionMs: Long,
-        durationMs: Long,
-        label: String,
-        folderPath: String,
-        displayName: String
-    ): Long {
-        return bookmarkDao.insert(
-            Bookmark(
-                filePath = filePath,
-                positionMs = positionMs,
-                durationMs = durationMs,
-                label = label,
-                createdAt = System.currentTimeMillis(),
-                folderPath = folderPath,
-                displayName = displayName
-            )
-        )
-    }
-
-    /** 更新书签 */
-    suspend fun updateBookmark(bookmark: Bookmark) =
-        bookmarkDao.update(bookmark)
-
-    /** 获取指定文件的书签 */
-    fun getBookmarks(filePath: String): Flow<List<Bookmark>> =
-        bookmarkDao.getByFilePath(filePath)
-
-    /** 获取所有书签 */
-    fun getAllBookmarks(): Flow<List<Bookmark>> =
-        bookmarkDao.getAll()
-
-    /** 获取指定文件夹的书签 */
-    fun getBookmarksByFolder(folderPath: String): Flow<List<Bookmark>> =
-        bookmarkDao.getByFolder(folderPath)
-
-    /** 删除书签 */
-    suspend fun deleteBookmark(id: Long) =
-        bookmarkDao.deleteById(id)
-
     // ==================== 有声书 ====================
 
     /**
@@ -178,7 +127,6 @@ class PlaybackRepository @Inject constructor(
     suspend fun importBook(folderPath: String, folderUri: String? = null): Book {
         val existing = bookDao.getByFolderPath(folderPath)
         if (existing != null) {
-            // 更新 URI
             if (folderUri != null) {
                 bookDao.updateFolderUri(existing.id, folderUri)
             }
@@ -233,82 +181,4 @@ class PlaybackRepository @Inject constructor(
     /** 删除书 */
     suspend fun deleteBook(id: Long) =
         bookDao.deleteById(id)
-
-    // ==================== 音乐歌单 ====================
-
-    /**
-     * 导入歌单 (文件夹)
-     * 如果已存在则返回已有的，否则新建
-     * @param folderUri SAF 授权的 URI (用于访问隐藏文件夹)
-     */
-    suspend fun importPlaylist(folderPath: String, trackCount: Int = 0, folderUri: String? = null): MusicPlaylist {
-        val existing = musicPlaylistDao.getByFolderPath(folderPath)
-        if (existing != null) {
-            // 更新歌曲数量和URI
-            musicPlaylistDao.updateTrackCount(existing.id, trackCount)
-            if (folderUri != null) {
-                musicPlaylistDao.updateFolderUri(existing.id, folderUri)
-            }
-            return existing.copy(trackCount = trackCount, folderUri = folderUri ?: existing.folderUri)
-        }
-
-        val folderName = File(folderPath).name
-        val playlist = MusicPlaylist(
-            folderPath = folderPath,
-            folderUri = folderUri,
-            name = folderName,
-            trackCount = trackCount,
-            importedAt = System.currentTimeMillis()
-        )
-        musicPlaylistDao.upsert(playlist)
-        return musicPlaylistDao.getByFolderPath(folderPath) ?: playlist
-    }
-
-    /** 获取所有歌单，按最近播放时间倒序 */
-    fun getAllPlaylistsByLastPlayed(): Flow<List<MusicPlaylist>> =
-        musicPlaylistDao.getAllByLastPlayed()
-
-    /** 获取所有歌单，按导入时间倒序 */
-    fun getAllPlaylistsByImportDate(): Flow<List<MusicPlaylist>> =
-        musicPlaylistDao.getAllByImportDate()
-
-    /** 根据文件夹路径获取歌单 */
-    suspend fun getPlaylist(folderPath: String): MusicPlaylist? =
-        musicPlaylistDao.getByFolderPath(folderPath)
-
-    /** 根据 ID 获取歌单 */
-    suspend fun getPlaylistById(id: Long): MusicPlaylist? =
-        musicPlaylistDao.getById(id)
-
-    /** 更新歌单名称 */
-    suspend fun updatePlaylistName(id: Long, name: String) =
-        musicPlaylistDao.updateName(id, name)
-
-    /** 更新歌单的最近播放时间 */
-    suspend fun updatePlaylistLastPlayed(id: Long) =
-        musicPlaylistDao.updateLastPlayedAt(id, System.currentTimeMillis())
-
-    /** 更新歌单歌曲数量 */
-    suspend fun updatePlaylistTrackCount(id: Long, count: Int) =
-        musicPlaylistDao.updateTrackCount(id, count)
-
-    /** 更新歌单的 folderUri */
-    suspend fun updatePlaylistFolderUri(id: Long, folderUri: String?) =
-        musicPlaylistDao.updateFolderUri(id, folderUri)
-
-    /** 删除歌单 */
-    suspend fun deletePlaylist(id: Long) =
-        musicPlaylistDao.deleteById(id)
-
-    /** 获取所有歌单 (非 Flow) */
-    suspend fun getAllPlaylists(): List<MusicPlaylist> =
-        musicPlaylistDao.getAll()
-
-    /** 手动记忆保存结果 */
-    data class MemorySaveResult(
-        val filePath: String,
-        val positionMs: Long,
-        val durationMs: Long,
-        val displayName: String
-    )
 }
