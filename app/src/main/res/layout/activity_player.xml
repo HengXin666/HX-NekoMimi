@@ -91,6 +91,38 @@
         android:paddingTop="8dp"
         android:paddingBottom="24dp">
 
+        <!-- BGM 设置按钮 -->
+        <LinearLayout
+            android:id="@+id/layoutBgmEntry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:paddingVertical="4dp"
+            android:paddingHorizontal="4dp"
+            android:layout_gravity="end"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:id="@+id/ivBgmIcon"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_music_note"
+                app:tint="@color/player_text_secondary" />
+
+            <TextView
+                android:id="@+id/tvBgmLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/bgm_settings"
+                android:textColor="@color/player_text_secondary"
+                android:textSize="12sp"
+                android:layout_marginStart="4dp" />
+
+        </LinearLayout>
+
         <!-- 进度条 -->
         <com.google.android.material.slider.Slider
             android:id="@+id/sliderProgress"

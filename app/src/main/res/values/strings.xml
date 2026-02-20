@@ -44,6 +44,17 @@
     <string name="input_book_name">请输入书籍名称</string>
     <string name="book_name_hint">书籍名称</string>
 
+    <!-- 背景音乐 -->
+    <string name="bgm_settings">背景音乐</string>
+    <string name="bgm_enable">启用背景音乐</string>
+    <string name="bgm_select_file">选择背景音乐</string>
+    <string name="bgm_no_file">未选择文件</string>
+    <string name="bgm_clear">清除背景音乐</string>
+    <string name="bgm_volume">背景音乐音量</string>
+    <string name="bgm_volume_hint">调低音量可以让听书声音更清晰</string>
+    <string name="bgm_volume_percent">%d%%</string>
+    <string name="bgm_file_error">无法读取所选音频文件</string>
+
     <!-- 时间格式 -->
     <string name="time_format">%1$02d:%2$02d:%3$02d</string>
     <string name="time_format_short">%1$02d:%2$02d</string>

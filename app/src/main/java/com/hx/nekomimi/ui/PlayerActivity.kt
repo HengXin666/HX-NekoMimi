@@ -1,10 +1,14 @@
 package com.hx.nekomimi.ui
 
 import android.content.ComponentName
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
@@ -12,11 +16,14 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.Slider
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.hx.nekomimi.R
+import com.hx.nekomimi.bgm.BgmManager
 import com.hx.nekomimi.databinding.ActivityPlayerBinding
+import com.hx.nekomimi.databinding.DialogBgmSettingsBinding
 import com.hx.nekomimi.service.MediaPlaybackService
 import com.hx.nekomimi.subtitle.SubtitleHelper
 import com.hx.nekomimi.ui.adapter.SubtitleAdapter
@@ -46,6 +53,31 @@ class PlayerActivity : AppCompatActivity() {
     private var isUserSeeking = false
     private var lastSaveTime = 0L
 
+    // BGM 文件选择器
+    private val bgmFilePicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // 持久化URI权限，防止重启后失效
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                // 某些 Provider 不支持持久化，忽略
+            }
+            BgmManager.setBgmUri(this, uri)
+            if (!BgmManager.isEnabled()) {
+                BgmManager.setEnabled(this, true)
+            } else {
+                // 已启用，重新开始播放新文件
+                BgmManager.stop()
+                BgmManager.start(this)
+            }
+            updateBgmEntryLabel()
+        }
+    }
+
     // 进度更新 Runnable
     private val progressUpdater = object : Runnable {
         override fun run() {
@@ -68,9 +100,13 @@ class PlayerActivity : AppCompatActivity() {
 
         viewModel.loadChapter(bookId, chapterId)
 
+        // 初始化 BGM 管理器
+        BgmManager.init(this)
+
         setupToolbar()
         setupSubtitleList()
         setupControls()
+        setupBgmEntry()
         observeData()
     }
 
@@ -99,6 +135,10 @@ class PlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        // 如果听书停止，也停止 BGM
+        if (mediaController?.isPlaying != true) {
+            BgmManager.pause()
+        }
     }
 
     private fun setupToolbar() {
@@ -322,6 +362,18 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnPlayPause.setImageResource(
             if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
         )
+        // 听书播放状态变化时，联动背景音乐
+        if (isPlaying) {
+            if (BgmManager.isEnabled()) {
+                if (BgmManager.isPlaying()) {
+                    // 已在播放
+                } else {
+                    BgmManager.start(this)
+                }
+            }
+        } else {
+            BgmManager.pause()
+        }
     }
 
     private fun saveCurrentProgress() {
@@ -329,5 +381,93 @@ class PlayerActivity : AppCompatActivity() {
         if (position > 0) {
             viewModel.saveProgress(position)
         }
+    }
+
+    // ========== 背景音乐 (BGM) ==========
+
+    private fun setupBgmEntry() {
+        updateBgmEntryLabel()
+        binding.layoutBgmEntry.setOnClickListener {
+            showBgmSettingsDialog()
+        }
+    }
+
+    /**
+     * 更新播放器底部 BGM 入口标签状态
+     */
+    private fun updateBgmEntryLabel() {
+        val enabled = BgmManager.isEnabled()
+        val hasFile = BgmManager.getBgmUri() != null
+        if (enabled && hasFile) {
+            binding.tvBgmLabel.text = getString(R.string.bgm_settings) + " · ON"
+            binding.ivBgmIcon.setColorFilter(getColor(R.color.primary))
+            binding.tvBgmLabel.setTextColor(getColor(R.color.primary))
+        } else {
+            binding.tvBgmLabel.text = getString(R.string.bgm_settings)
+            binding.ivBgmIcon.setColorFilter(getColor(R.color.player_text_secondary))
+            binding.tvBgmLabel.setTextColor(getColor(R.color.player_text_secondary))
+        }
+    }
+
+    /**
+     * 显示 BGM 设置弹窗
+     */
+    private fun showBgmSettingsDialog() {
+        val dialogBinding = DialogBgmSettingsBinding.inflate(layoutInflater)
+
+        // 初始化开关状态
+        dialogBinding.switchBgmEnable.isChecked = BgmManager.isEnabled()
+
+        // 初始化文件名显示
+        val displayName = BgmManager.getBgmDisplayName(this)
+        if (displayName != null) {
+            dialogBinding.tvBgmFileName.text = displayName
+            dialogBinding.btnClearBgm.visibility = View.VISIBLE
+        } else {
+            dialogBinding.tvBgmFileName.text = getString(R.string.bgm_no_file)
+            dialogBinding.btnClearBgm.visibility = View.GONE
+        }
+
+        // 初始化音量滑块
+        val currentVolume = (BgmManager.getVolume() * 100).toInt()
+        dialogBinding.sliderBgmVolume.value = currentVolume.toFloat()
+        dialogBinding.tvVolumePercent.text = getString(R.string.bgm_volume_percent, currentVolume)
+
+        // 开关监听
+        dialogBinding.switchBgmEnable.setOnCheckedChangeListener { _, isChecked ->
+            BgmManager.setEnabled(this, isChecked)
+            updateBgmEntryLabel()
+        }
+
+        // 选择文件
+        dialogBinding.layoutSelectBgm.setOnClickListener {
+            bgmFilePicker.launch(arrayOf("audio/*"))
+        }
+
+        // 清除文件
+        dialogBinding.btnClearBgm.setOnClickListener {
+            BgmManager.setBgmUri(this, null)
+            dialogBinding.tvBgmFileName.text = getString(R.string.bgm_no_file)
+            dialogBinding.btnClearBgm.visibility = View.GONE
+            updateBgmEntryLabel()
+        }
+
+        // 音量滑块
+        dialogBinding.sliderBgmVolume.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                val vol = value / 100f
+                BgmManager.setVolume(this, vol)
+                dialogBinding.tvVolumePercent.text = getString(R.string.bgm_volume_percent, value.toInt())
+            }
+        }
+
+        MaterialAlertDialogBuilder(this, R.style.Theme_NekoMimi_Dialog)
+            .setTitle(R.string.bgm_settings)
+            .setView(dialogBinding.root)
+            .setPositiveButton(R.string.confirm) { dialog, _ ->
+                dialog.dismiss()
+                updateBgmEntryLabel()
+            }
+            .show()
     }
 }
