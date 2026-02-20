@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import androidx.appcompat.app.AppCompatDelegate
 import com.hx.nekomimi.data.AppDatabase
 
 class NekoMimiApp : Application() {
@@ -19,6 +20,10 @@ class NekoMimiApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // 强制暗色模式，确保通知栏/锁屏栏使用暗色主题
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+
         createNotificationChannel()
     }
 

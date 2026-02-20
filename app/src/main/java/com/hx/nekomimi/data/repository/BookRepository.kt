@@ -46,6 +46,12 @@ class BookRepository(private val db: AppDatabase) {
     suspend fun getChapterCount(bookId: Long): Int =
         chapterDao.getChapterCount(bookId)
 
+    /**
+     * 监听章节表整体变化
+     */
+    fun observeTotalChapterCount(): LiveData<Int> =
+        chapterDao.observeTotalChapterCount()
+
     // ========== 播放进度操作 ==========
 
     suspend fun getProgressByBookId(bookId: Long): PlaybackProgress? =

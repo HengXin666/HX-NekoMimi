@@ -33,4 +33,10 @@ interface ChapterDao {
 
     @Query("SELECT COUNT(*) FROM chapters WHERE bookId = :bookId")
     suspend fun getChapterCount(bookId: Long): Int
+
+    /**
+     * 监听章节表的整体变化（用于触发主页刷新）
+     */
+    @Query("SELECT COUNT(*) FROM chapters")
+    fun observeTotalChapterCount(): LiveData<Int>
 }
