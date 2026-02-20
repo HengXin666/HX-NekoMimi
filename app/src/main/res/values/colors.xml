@@ -1,40 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 主色调 - 温暖的紫色系 -->
-    <color name="primary">#FF6750A4</color>
-    <color name="primary_dark">#FF4F378B</color>
-    <color name="primary_light">#FFEADDFF</color>
-    <color name="on_primary">#FFFFFFFF</color>
-    <color name="on_primary_light">#FF21005D</color>
+    <!-- 粉色黑夜主题 🌸🌙 -->
 
-    <!-- 次要色 -->
-    <color name="secondary">#FF625B71</color>
-    <color name="secondary_light">#FFE8DEF8</color>
-    <color name="on_secondary">#FFFFFFFF</color>
+    <!-- 主色调 - 粉色/玫瑰色系 -->
+    <color name="primary">#FFFF6B9D</color>           <!-- 粉色 -->
+    <color name="primary_dark">#FFD4497A</color>       <!-- 深粉色 -->
+    <color name="primary_light">#FFFFB3D1</color>      <!-- 浅粉色 -->
+    <color name="on_primary">#FF1A0010</color>          <!-- 粉色上的文字（深色） -->
+    <color name="on_primary_light">#FF4A0028</color>    <!-- 浅粉色上的文字 -->
 
-    <!-- 背景色 -->
-    <color name="background">#FFFEF7FF</color>
-    <color name="surface">#FFFEF7FF</color>
-    <color name="surface_variant">#FFE7E0EC</color>
-    <color name="on_background">#FF1D1B20</color>
-    <color name="on_surface">#FF1D1B20</color>
-    <color name="on_surface_variant">#FF49454F</color>
+    <!-- 次要色 - 薰衣草紫 -->
+    <color name="secondary">#FFC084E8</color>           <!-- 薰衣草紫 -->
+    <color name="secondary_light">#FFE8B4F8</color>     <!-- 浅薰衣草 -->
+    <color name="on_secondary">#FF1A0030</color>
+
+    <!-- 背景色 - 深色夜空 -->
+    <color name="background">#FF0D0D12</color>          <!-- 深蓝黑色 -->
+    <color name="surface">#FF16161E</color>             <!-- 略浅的深色表面 -->
+    <color name="surface_variant">#FF1E1E2A</color>     <!-- 卡片/变体表面 -->
+    <color name="on_background">#FFECDCF0</color>       <!-- 浅粉白文字 -->
+    <color name="on_surface">#FFECDCF0</color>          <!-- 浅粉白文字 -->
+    <color name="on_surface_variant">#FF9A8FA0</color>  <!-- 次要文字 -->
 
     <!-- 播放器相关 -->
-    <color name="player_background">#FF1C1B1F</color>
-    <color name="player_text">#FFFFFFFF</color>
-    <color name="player_text_secondary">#AAFFFFFF</color>
-    <color name="subtitle_highlight">#FFFFD700</color>
-    <color name="subtitle_normal">#CCFFFFFF</color>
-    <color name="progress_bar">#FF6750A4</color>
-    <color name="progress_bar_bg">#33FFFFFF</color>
+    <color name="player_background">#FF0A0A10</color>   <!-- 更深的播放器背景 -->
+    <color name="player_text">#FFFFEEF5</color>         <!-- 粉白色文字 -->
+    <color name="player_text_secondary">#AAFFE0EE</color>
+    <color name="subtitle_highlight">#FFFFABD5</color>  <!-- 粉色高亮字幕 -->
+    <color name="subtitle_normal">#CCECDCF0</color>     <!-- 正常字幕色 -->
+    <color name="progress_bar">#FFFF6B9D</color>        <!-- 粉色进度条 -->
+    <color name="progress_bar_bg">#33FF6B9D</color>     <!-- 半透明粉色进度条背景 -->
 
     <!-- 卡片 -->
-    <color name="card_background">#FFFFFFFF</color>
-    <color name="card_stroke">#1F000000</color>
+    <color name="card_background">#FF1A1A24</color>     <!-- 深色卡片 -->
+    <color name="card_stroke">#33FF6B9D</color>         <!-- 粉色描边 -->
 
     <!-- 其他 -->
-    <color name="error">#FFB3261E</color>
-    <color name="divider">#1F000000</color>
-    <color name="ripple">#1F6750A4</color>
+    <color name="error">#FFFF5277</color>               <!-- 粉红色错误提示 -->
+    <color name="divider">#1FFF6B9D</color>             <!-- 粉色分割线 -->
+    <color name="ripple">#1FFF6B9D</color>              <!-- 粉色涟漪效果 -->
 </resources>

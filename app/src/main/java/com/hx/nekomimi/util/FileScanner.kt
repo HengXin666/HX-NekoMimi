@@ -11,7 +11,7 @@ import com.hx.nekomimi.data.entity.Chapter
  */
 object FileScanner {
 
-    private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "flac", "wav", "ogg", "aac", "wma")
+private val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "m4s", "flac", "wav", "ogg", "aac", "wma")
     private val SUBTITLE_EXTENSIONS = setOf("srt", "ass", "ssa")
 
     /**

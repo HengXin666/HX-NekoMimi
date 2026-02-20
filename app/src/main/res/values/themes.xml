@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- 基础主题 -->
-    <style name="Theme.NekoMimi" parent="Theme.Material3.Light.NoActionBar">
+    <!-- 粉色黑夜主题 🌸🌙 -->
+    <style name="Theme.NekoMimi" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/primary_dark</item>
         <item name="colorOnPrimary">@color/on_primary</item>
@@ -15,11 +15,11 @@
         <item name="colorOnSurfaceVariant">@color/on_surface_variant</item>
         <item name="colorError">@color/error</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@color/surface</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/background</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
-    <!-- 播放器主题（暗色） -->
+    <!-- 播放器主题（更深的暗色 + 粉色强调） -->
     <style name="Theme.NekoMimi.Player" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/primary_light</item>
         <item name="colorOnPrimary">@color/on_primary_light</item>
