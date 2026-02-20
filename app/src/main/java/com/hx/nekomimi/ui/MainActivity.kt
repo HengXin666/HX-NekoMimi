@@ -11,12 +11,15 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.hx.nekomimi.R
 import com.hx.nekomimi.NekoMimiApp
+import com.hx.nekomimi.bgm.BgmManager
 import com.hx.nekomimi.data.entity.Book
 import com.hx.nekomimi.data.repository.BookRepository
 import com.hx.nekomimi.databinding.ActivityMainBinding
 import com.hx.nekomimi.databinding.DialogAddBookBinding
+import com.hx.nekomimi.databinding.DialogBgmSettingsBinding
 import com.hx.nekomimi.ui.adapter.BookAdapter
 import com.hx.nekomimi.ui.viewmodel.MainViewModel
 import com.hx.nekomimi.util.FileScanner
@@ -45,10 +48,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // BGM 文件选择器
+    private val bgmFilePicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            // 持久化URI权限，防止重启后失效
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                // 某些 Provider 不支持持久化，忽略
+            }
+            BgmManager.setBgmUri(this, uri)
+            if (!BgmManager.isEnabled()) {
+                BgmManager.setEnabled(this, true)
+            } else {
+                BgmManager.stop()
+                BgmManager.start(this)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // 初始化 BGM 管理器
+        BgmManager.init(this)
 
         setupToolbar()
         setupRecyclerView()
@@ -59,6 +88,10 @@ class MainActivity : AppCompatActivity() {
     private fun setupToolbar() {
         binding.toolbar.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
+                R.id.action_bgm_settings -> {
+                    showBgmSettingsDialog()
+                    true
+                }
                 R.id.action_refresh -> {
                     refreshAllBooks()
                     true
@@ -190,5 +223,66 @@ class MainActivity : AppCompatActivity() {
 
             Toast.makeText(this@MainActivity, "刷新完成", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // ========== 背景音乐 (BGM) 设置 ==========
+
+    /**
+     * 显示 BGM 设置弹窗
+     */
+    private fun showBgmSettingsDialog() {
+        val dialogBinding = DialogBgmSettingsBinding.inflate(layoutInflater)
+
+        // 初始化开关状态
+        dialogBinding.switchBgmEnable.isChecked = BgmManager.isEnabled()
+
+        // 初始化文件名显示
+        val displayName = BgmManager.getBgmDisplayName(this)
+        if (displayName != null) {
+            dialogBinding.tvBgmFileName.text = displayName
+            dialogBinding.btnClearBgm.visibility = View.VISIBLE
+        } else {
+            dialogBinding.tvBgmFileName.text = getString(R.string.bgm_no_file)
+            dialogBinding.btnClearBgm.visibility = View.GONE
+        }
+
+        // 初始化音量滑块
+        val currentVolume = (BgmManager.getVolume() * 100).toInt()
+        dialogBinding.sliderBgmVolume.value = currentVolume.toFloat()
+        dialogBinding.tvVolumePercent.text = getString(R.string.bgm_volume_percent, currentVolume)
+
+        // 开关监听
+        dialogBinding.switchBgmEnable.setOnCheckedChangeListener { _, isChecked ->
+            BgmManager.setEnabled(this, isChecked)
+        }
+
+        // 选择文件
+        dialogBinding.layoutSelectBgm.setOnClickListener {
+            bgmFilePicker.launch(arrayOf("audio/*"))
+        }
+
+        // 清除文件
+        dialogBinding.btnClearBgm.setOnClickListener {
+            BgmManager.setBgmUri(this, null)
+            dialogBinding.tvBgmFileName.text = getString(R.string.bgm_no_file)
+            dialogBinding.btnClearBgm.visibility = View.GONE
+        }
+
+        // 音量滑块
+        dialogBinding.sliderBgmVolume.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                val vol = value / 100f
+                BgmManager.setVolume(this, vol)
+                dialogBinding.tvVolumePercent.text = getString(R.string.bgm_volume_percent, value.toInt())
+            }
+        }
+
+        MaterialAlertDialogBuilder(this, R.style.Theme_NekoMimi_Dialog)
+            .setTitle(R.string.bgm_settings)
+            .setView(dialogBinding.root)
+            .setPositiveButton(R.string.confirm) { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
     }
 }
