@@ -1,4 +1,0 @@
-# libass 依赖编译产物 (由 build_deps.sh 生成)
-# 预编译的静态库需要提交到仓库, 不要忽略 prebuilt/ 目录
-build_deps/
-sources/

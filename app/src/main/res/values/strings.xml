@@ -1,17 +1,50 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">NekoMimi</string>
-    <string name="select_folder">选择文件夹</string>
-    <string name="no_audio_files">未找到音频文件</string>
-    <string name="playing">正在播放</string>
-    <string name="paused">已暂停</string>
-    <string name="position_saved">播放位置已记忆</string>
-    <string name="notification_channel_playback">播放控制</string>
-    <string name="notification_channel_playback_desc">音频播放通知和控制</string>
-    <string name="notification_default_title">NekoMimi</string>
-    <string name="notification_play">播放</string>
-    <string name="notification_pause">暂停</string>
-    <string name="notification_next">下一章</string>
-    <string name="notification_previous">上一章</string>
-    <string name="notification_stop">停止</string>
+    <string name="app_name">猫耳听书</string>
+
+    <!-- 主界面 -->
+    <string name="title_my_books">我的书架</string>
+    <string name="action_add_book">添加书籍</string>
+    <string name="action_refresh">刷新</string>
+    <string name="empty_books">书架空空如也\n点击右下角添加书籍</string>
+    <string name="delete_book_title">删除书籍</string>
+    <string name="delete_book_message">确定要删除「%s」吗？\n（仅从书架移除，不会删除文件）</string>
+
+    <!-- 书籍详情 -->
+    <string name="title_book_detail">书籍详情</string>
+    <string name="last_played">上次播放</string>
+    <string name="last_played_info">%1$s\n%2$s</string>
+    <string name="continue_play">继续播放</string>
+    <string name="chapter_count">共 %d 个章节</string>
+    <string name="no_chapters">暂无章节\n请点击右上角刷新扫描</string>
+    <string name="action_refresh_chapters">刷新章节</string>
+    <string name="scanning_chapters">正在扫描章节…</string>
+
+    <!-- 播放页面 -->
+    <string name="title_player">正在播放</string>
+    <string name="no_subtitle">暂无字幕</string>
+    <string name="loading_subtitle">加载字幕中…</string>
+    <string name="last_position_hint">上次播放到 %s</string>
+    <string name="jump_to_position">跳转</string>
+
+    <!-- 通用 -->
+    <string name="confirm">确定</string>
+    <string name="cancel">取消</string>
+    <string name="loading">加载中…</string>
+    <string name="error_occurred">发生错误</string>
+    <string name="permission_required">需要存储权限才能读取音频文件</string>
+    <string name="grant_permission">授予权限</string>
+
+    <!-- 通知 -->
+    <string name="notification_channel_name">音频播放</string>
+    <string name="notification_channel_desc">听书音频播放通知</string>
+
+    <!-- 文件选择 -->
+    <string name="select_book_folder">选择书籍文件夹</string>
+    <string name="input_book_name">请输入书籍名称</string>
+    <string name="book_name_hint">书籍名称</string>
+
+    <!-- 时间格式 -->
+    <string name="time_format">%1$02d:%2$02d:%3$02d</string>
+    <string name="time_format_short">%1$02d:%2$02d</string>
 </resources>

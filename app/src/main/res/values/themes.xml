@@ -1,7 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.NekoMimi" parent="android:Theme.Material.Light.NoActionBar">
+
+    <!-- 基础主题 -->
+    <style name="Theme.NekoMimi" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="colorSecondary">@color/secondary</item>
+        <item name="colorOnSecondary">@color/on_secondary</item>
+        <item name="android:colorBackground">@color/background</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/on_surface</item>
+        <item name="colorSurfaceVariant">@color/surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/on_surface_variant</item>
+        <item name="colorError">@color/error</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <!-- 播放器主题（暗色） -->
+    <style name="Theme.NekoMimi.Player" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/primary_light</item>
+        <item name="colorOnPrimary">@color/on_primary_light</item>
+        <item name="android:colorBackground">@color/player_background</item>
+        <item name="colorSurface">@color/player_background</item>
+        <item name="android:statusBarColor">@color/player_background</item>
+        <item name="android:navigationBarColor">@color/player_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Toolbar 样式 -->
+    <style name="ToolbarTitle" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textColor">@color/on_surface</item>
+    </style>
+
+    <!-- 书籍卡片标题 -->
+    <style name="BookCardTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textColor">@color/on_surface</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <!-- 章节列表项 -->
+    <style name="ChapterItemTitle" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textColor">@color/on_surface</item>
+    </style>
+
+    <style name="ChapterItemSubtitle" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">@color/on_surface_variant</item>
+    </style>
+
+    <!-- 播放器字幕文字 -->
+    <style name="SubtitleText" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textColor">@color/subtitle_normal</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:lineSpacingMultiplier">1.5</item>
+    </style>
+
+    <style name="SubtitleTextHighlight" parent="SubtitleText">
+        <item name="android:textColor">@color/subtitle_highlight</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
 </resources>

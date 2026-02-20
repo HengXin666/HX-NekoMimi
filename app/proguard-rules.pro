@@ -1,30 +1,24 @@
-# NekoMimi ProGuard Rules
+# 默认 ProGuard 规则
+-keepattributes *Annotation*
 
 # Room
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class *
 -dontwarn androidx.room.paging.**
 
-# Hilt
--keep class dagger.hilt.** { *; }
--keep class javax.inject.** { *; }
--keep class * extends dagger.hilt.android.internal.lifecycle.HiltViewModelFactory
+# Glide
+-keep public class * implements com.bumptech.glide.module.GlideModule
+-keep class * extends com.bumptech.glide.module.AppGlideModule {
+ <init>(...);
+}
+-keep public enum com.bumptech.glide.load.ImageHeaderParser$** {
+  **[] $VALUES;
+  public *;
+}
 
 # Media3
 -keep class androidx.media3.** { *; }
 -dontwarn androidx.media3.**
 
-# Coroutines
--keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
--keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
-
-# 保留数据类
--keep class com.hx.nekomimi.data.db.entity.** { *; }
--keep class com.hx.nekomimi.subtitle.model.** { *; }
-
-# libass JNI 渲染器 (native 方法不能被混淆)
--keep class com.hx.nekomimi.subtitle.AssRenderer { *; }
--keepclassmembers class com.hx.nekomimi.subtitle.AssRenderer {
-    native <methods>;
-    public <methods>;
-}
+# JNI (libass)
+-keep class com.hx.nekomimi.subtitle.NativeAssRenderer { *; }
