@@ -143,6 +143,21 @@
 
             </LinearLayout>
 
+            <!-- 倍速按钮 -->
+            <TextView
+                android:id="@+id/tvSpeedLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="1.0×"
+                android:textColor="@color/player_text_secondary"
+                android:textSize="12sp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:paddingVertical="4dp"
+                android:paddingHorizontal="8dp"
+                android:layout_marginStart="12dp"
+                android:clickable="true"
+                android:focusable="true" />
+
             <View
                 android:layout_width="0dp"
                 android:layout_height="0dp"

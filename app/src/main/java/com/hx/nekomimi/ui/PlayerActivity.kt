@@ -41,6 +41,10 @@ class PlayerActivity : AppCompatActivity() {
         private const val SEEK_INCREMENT_MS = 30_000L     // 快进/快退 30 秒
         private const val PREF_NAME = "subtitle_prefs"
         private const val KEY_SUBTITLE_MODE = "subtitle_display_mode"
+        private const val KEY_PLAYBACK_SPEED = "playback_speed"
+
+        /** 可选倍速列表 */
+        private val SPEED_OPTIONS = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
     }
 
     private lateinit var binding: ActivityPlayerBinding
@@ -58,6 +62,17 @@ class PlayerActivity : AppCompatActivity() {
 
     /** 当前字幕显示模式 */
     private var currentDisplayMode = SubtitleDisplayMode.DEFAULT
+
+    /** 当前播放倍速 */
+    private var currentSpeed = 1.0f
+
+    /**
+     * 双行字幕交替状态：
+     * 记录上一次高亮的字幕索引，用于判断交替位置
+     * true = 当前高亮在上面（tvCurrentLine），false = 当前高亮在下面（tvNextLine）
+     */
+    private var dualLineHighlightOnTop = true
+    private var lastDualLineIndex = -1
 
     /**
      * 歌词模式：用户是否正在手动滚动（手动滚动时解除居中锁定）
@@ -117,14 +132,16 @@ class PlayerActivity : AppCompatActivity() {
         // 初始化 BGM 管理器
         BgmManager.init(this)
 
-        // 恢复保存的字幕模式
+        // 恢复保存的字幕模式和倍速
         loadSubtitleMode()
+        loadPlaybackSpeed()
 
         setupToolbar()
         setupSubtitleList()
         setupControls()
         setupBgmEntry()
         setupSubtitleModeSwitch()
+        setupSpeedControl()
         observeData()
     }
 
@@ -279,6 +296,67 @@ class PlayerActivity : AppCompatActivity() {
         currentDisplayMode = SubtitleDisplayMode.fromOrdinal(ordinal)
     }
 
+    // ========== 倍速控制 ==========
+
+    private fun setupSpeedControl() {
+        updateSpeedLabel()
+        binding.tvSpeedLabel.setOnClickListener {
+            showSpeedDialog()
+        }
+    }
+
+    private fun showSpeedDialog() {
+        val speedLabels = SPEED_OPTIONS.map { speed ->
+            if (speed == speed.toLong().toFloat()) "${speed.toLong().toInt()}x" else "${speed}x"
+        }.toTypedArray()
+
+        val checkedIndex = SPEED_OPTIONS.indexOfFirst { it == currentSpeed }.coerceAtLeast(0)
+
+        MaterialAlertDialogBuilder(this, R.style.Theme_NekoMimi_Dialog)
+            .setTitle(R.string.speed_setting)
+            .setSingleChoiceItems(speedLabels, checkedIndex) { dialog, which ->
+                val newSpeed = SPEED_OPTIONS[which]
+                setPlaybackSpeed(newSpeed)
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun setPlaybackSpeed(speed: Float) {
+        currentSpeed = speed
+        savePlaybackSpeed()
+        updateSpeedLabel()
+        mediaController?.setPlaybackSpeed(speed)
+    }
+
+    private fun updateSpeedLabel() {
+        val label = if (currentSpeed == currentSpeed.toLong().toFloat()) {
+            "${currentSpeed.toInt()}.0×"
+        } else {
+            "${currentSpeed}×"
+        }
+        binding.tvSpeedLabel.text = label
+        // 非1.0倍速时高亮显示
+        if (currentSpeed != 1.0f) {
+            binding.tvSpeedLabel.setTextColor(getColor(R.color.primary))
+        } else {
+            binding.tvSpeedLabel.setTextColor(getColor(R.color.player_text_secondary))
+        }
+    }
+
+    private fun savePlaybackSpeed() {
+        getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+            .edit()
+            .putFloat(KEY_PLAYBACK_SPEED, currentSpeed)
+            .apply()
+    }
+
+    private fun loadPlaybackSpeed() {
+        val prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+        currentSpeed = prefs.getFloat(KEY_PLAYBACK_SPEED, 1.0f)
+    }
+
     private fun setupControls() {
         // 播放/暂停按钮
         binding.btnPlayPause.setOnClickListener {
@@ -410,6 +488,9 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
 
+        // 设置保存的倍速
+        controller.setPlaybackSpeed(currentSpeed)
+
         // 开始播放
         startPlayback(controller)
     }
@@ -496,28 +577,95 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     /**
-     * 双行字幕模式：更新当前行和下一行文本
+     * 双行字幕模式：交替高亮
+     *
+     * 逻辑说明：
+     * - 两行字幕交替显示，上面说完了高亮下面，同时上面变成下一句
+     * - 例如：
+     *   初始：上=句1(高亮) 下=句2(暗)
+     *   切换：上=句3(暗)   下=句2(高亮)
+     *   切换：上=句3(高亮) 下=句4(暗)
+     *   如此交替...
      */
     private fun updateDualLineMode(index: Int, subtitles: List<com.hx.nekomimi.subtitle.SubtitleEntry>) {
         val dualLineBinding = binding.layoutDualLine
 
         if (index >= 0 && index < subtitles.size) {
-            dualLineBinding.tvCurrentLine.text = subtitles[index].text
-            // 下一行
-            if (index + 1 < subtitles.size) {
-                dualLineBinding.tvNextLine.text = subtitles[index + 1].text
-                dualLineBinding.tvNextLine.visibility = View.VISIBLE
-            } else {
-                dualLineBinding.tvNextLine.text = ""
-                dualLineBinding.tvNextLine.visibility = View.INVISIBLE
+            // 字幕索引发生变化时，切换高亮位置
+            if (index != lastDualLineIndex) {
+                if (lastDualLineIndex == -1) {
+                    // 首次显示，高亮在上面
+                    dualLineHighlightOnTop = true
+                } else {
+                    // 交替切换
+                    dualLineHighlightOnTop = !dualLineHighlightOnTop
+                }
+                lastDualLineIndex = index
             }
+
+            val currentText = subtitles[index].text
+            val nextText = if (index + 1 < subtitles.size) subtitles[index + 1].text else ""
+
+            if (dualLineHighlightOnTop) {
+                // 高亮在上面：上=当前句(高亮)，下=下一句(暗)
+                dualLineBinding.tvCurrentLine.text = currentText
+                dualLineBinding.tvNextLine.text = nextText
+                // 上面高亮样式
+                dualLineBinding.tvCurrentLine.setTextColor(getColor(R.color.subtitle_highlight))
+                dualLineBinding.tvCurrentLine.textSize = 20f
+                dualLineBinding.tvCurrentLine.alpha = 1.0f
+                dualLineBinding.tvCurrentLine.paint.isFakeBoldText = true
+                // 下面暗色样式
+                dualLineBinding.tvNextLine.setTextColor(getColor(R.color.player_text_secondary))
+                dualLineBinding.tvNextLine.textSize = 16f
+                dualLineBinding.tvNextLine.alpha = 0.6f
+                dualLineBinding.tvNextLine.paint.isFakeBoldText = false
+            } else {
+                // 高亮在下面：上=下一句(暗)，下=当前句(高亮)
+                dualLineBinding.tvCurrentLine.text = nextText
+                dualLineBinding.tvNextLine.text = currentText
+                // 上面暗色样式
+                dualLineBinding.tvCurrentLine.setTextColor(getColor(R.color.player_text_secondary))
+                dualLineBinding.tvCurrentLine.textSize = 16f
+                dualLineBinding.tvCurrentLine.alpha = 0.6f
+                dualLineBinding.tvCurrentLine.paint.isFakeBoldText = false
+                // 下面高亮样式
+                dualLineBinding.tvNextLine.setTextColor(getColor(R.color.subtitle_highlight))
+                dualLineBinding.tvNextLine.textSize = 20f
+                dualLineBinding.tvNextLine.alpha = 1.0f
+                dualLineBinding.tvNextLine.paint.isFakeBoldText = true
+            }
+
+            dualLineBinding.tvCurrentLine.visibility = View.VISIBLE
+            dualLineBinding.tvNextLine.visibility = if (nextText.isNotEmpty() || !dualLineHighlightOnTop) View.VISIBLE else View.INVISIBLE
+
+            // 触发重绘
+            dualLineBinding.tvCurrentLine.invalidate()
+            dualLineBinding.tvNextLine.invalidate()
         } else {
             // 当前没有字幕匹配（间隙期间）
             // 找到下一条即将出现的字幕
             val nextIndex = subtitles.indexOfFirst { it.startMs > (viewModel.currentPosition.value ?: 0L) }
             if (nextIndex >= 0) {
-                dualLineBinding.tvCurrentLine.text = ""
-                dualLineBinding.tvNextLine.text = subtitles[nextIndex].text
+                if (dualLineHighlightOnTop) {
+                    // 上一次高亮在上面，那下一句预览放下面
+                    dualLineBinding.tvCurrentLine.text = ""
+                    dualLineBinding.tvNextLine.text = subtitles[nextIndex].text
+                    dualLineBinding.tvCurrentLine.alpha = 0.6f
+                    dualLineBinding.tvNextLine.setTextColor(getColor(R.color.player_text_secondary))
+                    dualLineBinding.tvNextLine.textSize = 16f
+                    dualLineBinding.tvNextLine.alpha = 0.6f
+                    dualLineBinding.tvNextLine.paint.isFakeBoldText = false
+                } else {
+                    // 上一次高亮在下面，那下一句预览放上面
+                    dualLineBinding.tvCurrentLine.text = subtitles[nextIndex].text
+                    dualLineBinding.tvNextLine.text = ""
+                    dualLineBinding.tvCurrentLine.setTextColor(getColor(R.color.player_text_secondary))
+                    dualLineBinding.tvCurrentLine.textSize = 16f
+                    dualLineBinding.tvCurrentLine.alpha = 0.6f
+                    dualLineBinding.tvCurrentLine.paint.isFakeBoldText = false
+                }
+                dualLineBinding.tvCurrentLine.visibility = View.VISIBLE
                 dualLineBinding.tvNextLine.visibility = View.VISIBLE
             } else {
                 dualLineBinding.tvCurrentLine.text = ""

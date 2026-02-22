@@ -33,6 +33,10 @@
     <string name="subtitle_mode_chat">对话模式</string>
     <string name="subtitle_mode_setting">字幕模式</string>
 
+    <!-- 播放倍速 -->
+    <string name="speed_setting">倍速</string>
+    <string name="speed_label">%s×</string>
+
     <!-- 通用 -->
     <string name="confirm">确定</string>
     <string name="cancel">取消</string>
