@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -16,6 +15,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.Slider
 import com.google.common.util.concurrent.ListenableFuture
@@ -25,6 +25,7 @@ import com.hx.nekomimi.bgm.BgmManager
 import com.hx.nekomimi.databinding.ActivityPlayerBinding
 import com.hx.nekomimi.databinding.DialogBgmSettingsBinding
 import com.hx.nekomimi.service.MediaPlaybackService
+import com.hx.nekomimi.subtitle.SubtitleDisplayMode
 import com.hx.nekomimi.subtitle.SubtitleHelper
 import com.hx.nekomimi.ui.adapter.SubtitleAdapter
 import com.hx.nekomimi.ui.viewmodel.PlayerViewModel
@@ -38,6 +39,8 @@ class PlayerActivity : AppCompatActivity() {
         private const val PROGRESS_UPDATE_INTERVAL = 300L // 进度更新间隔（毫秒）
         private const val PROGRESS_SAVE_INTERVAL = 5000L  // 进度保存间隔（毫秒）
         private const val SEEK_INCREMENT_MS = 30_000L     // 快进/快退 30 秒
+        private const val PREF_NAME = "subtitle_prefs"
+        private const val KEY_SUBTITLE_MODE = "subtitle_display_mode"
     }
 
     private lateinit var binding: ActivityPlayerBinding
@@ -52,6 +55,17 @@ class PlayerActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var isUserSeeking = false
     private var lastSaveTime = 0L
+
+    /** 当前字幕显示模式 */
+    private var currentDisplayMode = SubtitleDisplayMode.DEFAULT
+
+    /**
+     * 歌词模式：用户是否正在手动滚动（手动滚动时解除居中锁定）
+     * 用户停止滚动 3 秒后自动恢复居中
+     */
+    private var isUserScrolling = false
+    private val resumeCenterRunnable = Runnable { isUserScrolling = false }
+    private val USER_SCROLL_RESUME_DELAY = 3000L
 
     // BGM 文件选择器
     private val bgmFilePicker = registerForActivityResult(
@@ -103,10 +117,14 @@ class PlayerActivity : AppCompatActivity() {
         // 初始化 BGM 管理器
         BgmManager.init(this)
 
+        // 恢复保存的字幕模式
+        loadSubtitleMode()
+
         setupToolbar()
         setupSubtitleList()
         setupControls()
         setupBgmEntry()
+        setupSubtitleModeSwitch()
         observeData()
     }
 
@@ -146,14 +164,119 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun setupSubtitleList() {
-        subtitleAdapter = SubtitleAdapter()
+        subtitleAdapter = SubtitleAdapter(currentDisplayMode)
         subtitleLayoutManager = LinearLayoutManager(this)
 
         binding.recyclerSubtitles.apply {
             layoutManager = subtitleLayoutManager
             adapter = subtitleAdapter
             itemAnimator = null // 禁用动画避免闪烁
+
+            // 监听用户手动滚动（歌词模式下，手动滚动时解除居中）
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                    if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                        // 用户开始手动滚动
+                        isUserScrolling = true
+                        handler.removeCallbacks(resumeCenterRunnable)
+                    } else if (newState == RecyclerView.SCROLL_STATE_IDLE && isUserScrolling) {
+                        // 用户停止滚动，延迟后恢复居中
+                        handler.postDelayed(resumeCenterRunnable, USER_SCROLL_RESUME_DELAY)
+                    }
+                }
+            })
         }
+    }
+
+    // ========== 字幕模式切换 ==========
+
+    private fun setupSubtitleModeSwitch() {
+        updateSubtitleModeLabel()
+
+        binding.layoutSubtitleMode.setOnClickListener {
+            showSubtitleModeDialog()
+        }
+    }
+
+    private fun showSubtitleModeDialog() {
+        val modeNames = arrayOf(
+            getString(R.string.subtitle_mode_lyric),
+            getString(R.string.subtitle_mode_dual),
+            getString(R.string.subtitle_mode_chat)
+        )
+        val checkedIndex = currentDisplayMode.ordinal
+
+        MaterialAlertDialogBuilder(this, R.style.Theme_NekoMimi_Dialog)
+            .setTitle(R.string.subtitle_mode_setting)
+            .setSingleChoiceItems(modeNames, checkedIndex) { dialog, which ->
+                val newMode = SubtitleDisplayMode.fromOrdinal(which)
+                switchDisplayMode(newMode)
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun switchDisplayMode(mode: SubtitleDisplayMode) {
+        if (currentDisplayMode == mode) return
+        currentDisplayMode = mode
+        saveSubtitleMode()
+        updateSubtitleModeLabel()
+        subtitleAdapter.setDisplayMode(mode)
+        applyDisplayMode()
+    }
+
+    /**
+     * 根据当前模式显示/隐藏对应的视图
+     */
+    private fun applyDisplayMode() {
+        val hasSubtitles = (viewModel.subtitles.value?.isNotEmpty() == true)
+
+        if (!hasSubtitles) {
+            binding.recyclerSubtitles.visibility = View.GONE
+            binding.layoutDualLine.root.visibility = View.GONE
+            binding.tvNoSubtitle.visibility = View.VISIBLE
+            return
+        }
+
+        binding.tvNoSubtitle.visibility = View.GONE
+
+        when (currentDisplayMode) {
+            SubtitleDisplayMode.LYRIC -> {
+                binding.recyclerSubtitles.visibility = View.VISIBLE
+                binding.layoutDualLine.root.visibility = View.GONE
+            }
+            SubtitleDisplayMode.DUAL_LINE -> {
+                binding.recyclerSubtitles.visibility = View.GONE
+                binding.layoutDualLine.root.visibility = View.VISIBLE
+            }
+            SubtitleDisplayMode.CHAT -> {
+                binding.recyclerSubtitles.visibility = View.VISIBLE
+                binding.layoutDualLine.root.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun updateSubtitleModeLabel() {
+        val label = when (currentDisplayMode) {
+            SubtitleDisplayMode.LYRIC -> getString(R.string.subtitle_mode_lyric)
+            SubtitleDisplayMode.DUAL_LINE -> getString(R.string.subtitle_mode_dual)
+            SubtitleDisplayMode.CHAT -> getString(R.string.subtitle_mode_chat)
+        }
+        binding.tvSubtitleModeLabel.text = label
+    }
+
+    private fun saveSubtitleMode() {
+        getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_SUBTITLE_MODE, currentDisplayMode.ordinal)
+            .apply()
+    }
+
+    private fun loadSubtitleMode() {
+        val prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
+        val ordinal = prefs.getInt(KEY_SUBTITLE_MODE, SubtitleDisplayMode.DEFAULT.ordinal)
+        currentDisplayMode = SubtitleDisplayMode.fromOrdinal(ordinal)
     }
 
     private fun setupControls() {
@@ -223,10 +346,10 @@ class PlayerActivity : AppCompatActivity() {
         viewModel.subtitles.observe(this) { subtitles ->
             if (subtitles.isNotEmpty()) {
                 subtitleAdapter.submitList(subtitles)
-                binding.recyclerSubtitles.visibility = View.VISIBLE
-                binding.tvNoSubtitle.visibility = View.GONE
+                applyDisplayMode()
             } else {
                 binding.recyclerSubtitles.visibility = View.GONE
+                binding.layoutDualLine.root.visibility = View.GONE
                 binding.tvNoSubtitle.visibility = View.VISIBLE
             }
         }
@@ -328,8 +451,8 @@ class PlayerActivity : AppCompatActivity() {
             binding.sliderProgress.value = progress
         }
 
-        // 更新字幕高亮
-        updateSubtitleHighlight(position)
+        // 根据模式更新字幕
+        updateSubtitleDisplay(position)
 
         // 定期保存进度
         val now = System.currentTimeMillis()
@@ -339,11 +462,74 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateSubtitleHighlight(positionMs: Long) {
+    /**
+     * 根据当前字幕模式更新字幕显示
+     */
+    private fun updateSubtitleDisplay(positionMs: Long) {
         val subtitles = viewModel.subtitles.value ?: return
         if (subtitles.isEmpty()) return
 
         val index = SubtitleHelper.getCurrentSubtitleIndex(subtitles, positionMs)
+
+        when (currentDisplayMode) {
+            SubtitleDisplayMode.LYRIC -> updateLyricMode(index)
+            SubtitleDisplayMode.DUAL_LINE -> updateDualLineMode(index, subtitles)
+            SubtitleDisplayMode.CHAT -> updateChatMode(index)
+        }
+    }
+
+    /**
+     * 歌词模式：高亮当前行并垂直居中滚动
+     */
+    private fun updateLyricMode(index: Int) {
+        subtitleAdapter.setHighlightIndex(index)
+
+        if (index >= 0 && !isUserScrolling) {
+            // 计算使当前行居中的滚动偏移
+            val recyclerView = binding.recyclerSubtitles
+            val recyclerHeight = recyclerView.height
+            val targetOffset = recyclerHeight / 2
+
+            // 使用 scrollToPositionWithOffset 将目标项置于中间
+            subtitleLayoutManager.scrollToPositionWithOffset(index, targetOffset)
+        }
+    }
+
+    /**
+     * 双行字幕模式：更新当前行和下一行文本
+     */
+    private fun updateDualLineMode(index: Int, subtitles: List<com.hx.nekomimi.subtitle.SubtitleEntry>) {
+        val dualLineBinding = binding.layoutDualLine
+
+        if (index >= 0 && index < subtitles.size) {
+            dualLineBinding.tvCurrentLine.text = subtitles[index].text
+            // 下一行
+            if (index + 1 < subtitles.size) {
+                dualLineBinding.tvNextLine.text = subtitles[index + 1].text
+                dualLineBinding.tvNextLine.visibility = View.VISIBLE
+            } else {
+                dualLineBinding.tvNextLine.text = ""
+                dualLineBinding.tvNextLine.visibility = View.INVISIBLE
+            }
+        } else {
+            // 当前没有字幕匹配（间隙期间）
+            // 找到下一条即将出现的字幕
+            val nextIndex = subtitles.indexOfFirst { it.startMs > (viewModel.currentPosition.value ?: 0L) }
+            if (nextIndex >= 0) {
+                dualLineBinding.tvCurrentLine.text = ""
+                dualLineBinding.tvNextLine.text = subtitles[nextIndex].text
+                dualLineBinding.tvNextLine.visibility = View.VISIBLE
+            } else {
+                dualLineBinding.tvCurrentLine.text = ""
+                dualLineBinding.tvNextLine.text = ""
+            }
+        }
+    }
+
+    /**
+     * 对话模式：高亮当前行并滚动到可见
+     */
+    private fun updateChatMode(index: Int) {
         subtitleAdapter.setHighlightIndex(index)
 
         // 自动滚动到当前字幕
@@ -351,7 +537,6 @@ class PlayerActivity : AppCompatActivity() {
             val firstVisible = subtitleLayoutManager.findFirstCompletelyVisibleItemPosition()
             val lastVisible = subtitleLayoutManager.findLastCompletelyVisibleItemPosition()
 
-            // 只有当前高亮字幕不在可见范围内时才滚动
             if (index !in firstVisible..lastVisible) {
                 binding.recyclerSubtitles.smoothScrollToPosition(index)
             }

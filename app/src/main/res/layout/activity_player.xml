@@ -59,28 +59,42 @@
 
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- 字幕显示区域 -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recyclerSubtitles"
+    <!-- 字幕区域容器 —— 包含三种模式的视图 -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:paddingHorizontal="24dp"
-        android:paddingVertical="16dp"
-        android:clipToPadding="false"
-        android:scrollbars="vertical" />
+        android:layout_weight="1">
 
-    <!-- 无字幕提示 -->
-    <TextView
-        android:id="@+id/tvNoSubtitle"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:text="@string/no_subtitle"
-        android:textColor="@color/player_text_secondary"
-        android:textSize="16sp"
-        android:visibility="gone" />
+        <!-- 歌词模式 / 对话模式 用 RecyclerView -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recyclerSubtitles"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="16dp"
+            android:clipToPadding="false"
+            android:scrollbars="vertical" />
+
+        <!-- 双行字幕模式 -->
+        <include
+            android:id="@+id/layoutDualLine"
+            layout="@layout/item_subtitle_dual"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <!-- 无字幕提示 -->
+        <TextView
+            android:id="@+id/tvNoSubtitle"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="@string/no_subtitle"
+            android:textColor="@color/player_text_secondary"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+    </FrameLayout>
 
     <!-- 底部播放控制区 -->
     <LinearLayout
@@ -90,6 +104,49 @@
         android:paddingHorizontal="24dp"
         android:paddingTop="8dp"
         android:paddingBottom="24dp">
+
+        <!-- 功能按钮行：字幕模式 + BGM -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- 字幕模式切换按钮 -->
+            <LinearLayout
+                android:id="@+id/layoutSubtitleMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:paddingVertical="4dp"
+                android:paddingHorizontal="4dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/ivSubtitleModeIcon"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_subtitle_mode"
+                    app:tint="@color/player_text_secondary" />
+
+                <TextView
+                    android:id="@+id/tvSubtitleModeLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/subtitle_mode_lyric"
+                    android:textColor="@color/player_text_secondary"
+                    android:textSize="12sp"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
 
         <!-- BGM 设置按钮 -->
         <LinearLayout
@@ -120,6 +177,8 @@
                 android:textColor="@color/player_text_secondary"
                 android:textSize="12sp"
                 android:layout_marginStart="4dp" />
+
+        </LinearLayout>
 
         </LinearLayout>
 

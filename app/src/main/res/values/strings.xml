@@ -27,6 +27,12 @@
     <string name="last_position_hint">上次播放到 %s</string>
     <string name="jump_to_position">跳转</string>
 
+    <!-- 字幕模式 -->
+    <string name="subtitle_mode_lyric">歌词模式</string>
+    <string name="subtitle_mode_dual">双行字幕</string>
+    <string name="subtitle_mode_chat">对话模式</string>
+    <string name="subtitle_mode_setting">字幕模式</string>
+
     <!-- 通用 -->
     <string name="confirm">确定</string>
     <string name="cancel">取消</string>
